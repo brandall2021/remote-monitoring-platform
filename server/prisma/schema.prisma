@@ -1,0 +1,204 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  OPERATOR
+}
+
+enum Permission {
+  USERS_READ
+  USERS_WRITE
+  USERS_DELETE
+  DEVICES_READ
+  DEVICES_WRITE
+  DEVICES_DELETE
+  COMMANDS_READ
+  COMMANDS_WRITE
+  COMMANDS_EXECUTE
+  SCREENSHOTS_REQUEST
+  SCREENSHOTS_VIEW
+  AUDIT_READ
+  SYSTEM_SETTINGS
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum CommandStatus {
+  PENDING
+  APPROVED
+  EXECUTING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+enum CommandType {
+  SCREENSHOT
+  SYSTEM_INFO
+  PROCESS_LIST
+  LOCK_SCREEN
+  SHUTDOWN
+  RESTART
+  LOGOUT
+}
+
+model RolePermission {
+  id          String   @id @default(uuid())
+  roleId      String
+  permission  Permission
+  createdAt   DateTime @default(now())
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permission])
+}
+
+model User {
+  id             String           @id @default(uuid())
+  email          String           @unique
+  username       String           @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  roleId         String
+  isActive       Boolean          @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  role              Role             @relation(fields: [roleId], references: [id])
+  auditLogs         AuditLog[]
+  commands          Command[]
+  refreshTokens     RefreshToken[]
+  deviceEvents      DeviceEvent[]
+  screenshots       Screenshot[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model Device {
+  id              String       @id @default(uuid())
+  hostname        String
+  agentVersion    String?
+  operatingSystem String
+  osVersion       String?
+  ipAddress       String
+  macAddress      String?
+  platform        String
+  status          DeviceStatus @default(OFFLINE)
+  lastSeenAt      DateTime?
+  registeredAt    DateTime     @default(now())
+  registrationToken String     @unique
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  commands   DeviceCommand[]
+  events     DeviceEvent[]
+  screenshots Screenshot[]
+
+  @@map("devices")
+}
+
+model DeviceCommand {
+  id            String        @id @default(uuid())
+  deviceId      String
+  requestedById String
+  commandType   CommandType
+  payload       Json?
+  status        CommandStatus @default(PENDING)
+  result        Json?
+  error         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  executedAt    DateTime?
+  approvedAt    DateTime?
+  approvedById  String?
+
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedBy User @relation(fields: [requestedById], references: [id])
+
+  @@map("device_commands")
+}
+
+model Screenshot {
+  id            String   @id @default(uuid())
+  deviceId      String
+  requestedById String
+  filePath      String
+  fileSize      Int?
+  mimeType      String   @default("image/png")
+  width         Int?
+  height        Int?
+  createdAt     DateTime @default(now())
+
+  device      Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedBy User   @relation(fields: [requestedById], references: [id])
+
+  @@map("screenshots")
+}
+
+model DeviceEvent {
+  id        String   @id @default(uuid())
+  deviceId  String
+  eventType String
+  message   String?
+  data      Json?
+  userId    String?
+  createdAt DateTime @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@map("device_events")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String
+  resource    String
+  resourceId  String?
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+
+  users              User[]
+  rolePermissions    RolePermission[]
+
+  @@map("roles")
+}

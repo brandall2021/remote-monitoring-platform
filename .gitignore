@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+uploads/
+*.log
+.DS_Store
+client/node_modules/
+client/dist/
+server/node_modules/
+server/dist/
+agent/node_modules/
+agent/dist/
