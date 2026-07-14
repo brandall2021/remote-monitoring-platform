@@ -1,0 +1,34 @@
+version: "1"
+
+services:
+  server:
+    image: ${DOCKER_REGISTRY:-}remote-monitoring-server
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      REDIS_URL: ${REDIS_URL}
+      PORT: 3000
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      AGENT_REGISTRATION_TOKEN: ${AGENT_REGISTRATION_TOKEN}
+      SCREENSHOTS_DIR: ./uploads/screenshots
+    volumes:
+      - screenshots_data:/app/uploads/screenshots
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  screenshots_data:

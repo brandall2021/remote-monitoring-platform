@@ -155,6 +155,56 @@ npm run dev
 - Token-based agent authentication
 - Encrypted screenshot transmission
 
+## Deploy with Dokploy
+
+### Option 1: Full Stack (Server + PostgreSQL + Redis)
+
+1. Create a new project in Dokploy
+2. Add a **Docker Compose** service
+3. Upload `docker-compose.dokploy.yml`
+4. Configure environment variables in Dokploy UI (see `dokploy.env.example`)
+5. Deploy
+
+### Option 2: Server Only (External Database)
+
+1. Create PostgreSQL and Redis in Dokploy (or use external)
+2. Create a new **Docker** service in Dokploy
+3. Set source to GitHub repo: `remote-monitoring-platform`
+4. Set Dockerfile: `server/Dockerfile`
+5. Configure environment variables:
+
+```
+DATABASE_URL=postgresql://user:pass@your-pg-host:5432/remote_monitoring
+REDIS_URL=redis://your-redis-host:6379
+JWT_SECRET=generate-random-32-chars
+JWT_REFRESH_SECRET=generate-random-32-chars
+CORS_ORIGIN=https://your-domain.com
+AGENT_REGISTRATION_TOKEN=generate-random-token
+NODE_ENV=production
+PORT=3000
+```
+
+6. Deploy
+
+### Dokploy Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:pass@postgres:5432/remote_monitoring` |
+| `JWT_SECRET` | JWT signing secret (min 32 chars) | `your-super-secret-jwt-key-change-this` |
+| `JWT_REFRESH_SECRET` | Refresh token secret | `your-super-secret-refresh-key-change-this` |
+| `REDIS_URL` | Redis connection string | `redis://redis:6379` |
+| `CORS_ORIGIN` | Allowed origin for CORS | `https://monitoring.yourdomain.com` |
+| `AGENT_REGISTRATION_TOKEN` | Token for agent registration | `random-token-here` |
+| `NODE_ENV` | Environment mode | `production` |
+
+### Post-Deploy
+
+1. Run database migration: `npx prisma migrate deploy` (automatic in Dockerfile)
+2. Seed initial data: `npx prisma db seed`
+3. Access admin panel at your configured domain
+4. Default login: `admin@monitoring.local` / `admin123`
+
 ## Development
 
 ```bash
