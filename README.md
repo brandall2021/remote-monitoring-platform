@@ -7,29 +7,49 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 ## Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        DOKPLOY (PaaS)                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │
-│  │  PostgreSQL  │  │    Redis    │  │   Server    │           │
-│  │  (Puerto     │  │  (Puerto    │  │  Node.js +  │           │
-│  │   5432)      │  │   6379)     │  │  Express +  │           │
-│  │             │  │             │  │  Socket.IO   │           │
-│  └──────┬──────┘  └──────┬──────┘  │  (Puerto    │           │
-│         │                │         │   3000)      │           │
-│         └────────────────┴─────────┴──────┬──────┘           │
-│                                           │                   │
-└───────────────────────────────────────────┼───────────────────┘
-                                            │ HTTPS/WSS
-                                            │
-                          ┌─────────────────┼─────────────────┐
-                          │                 │                  │
-                   ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────┐
-                   │   Panel Web │  │   Agente 1  │  │   Agente N  │
-                   │   React +   │  │   Windows   │  │   Windows   │
-                   │   Material  │  │   (PCs)     │  │   (PCs)     │
-                   │   UI        │  │             │  │             │
-                   └─────────────┘  └─────────────┘  └─────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DOKPLOY (PaaS)                              │
+│                                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │  PostgreSQL   │  │    Redis     │  │    Server    │             │
+│  │  (5432)       │  │  (6379)      │  │  Node.js +   │             │
+│  │              │  │              │  │  Express +    │             │
+│  │              │  │              │  │  Socket.IO    │             │
+│  └──────┬───────┘  └──────┬───────┘  │  (3000)      │             │
+│         │                 │          └──────┬───────┘             │
+│         └─────────────────┴─────────────────┘                     │
+│                                   │                                │
+│                          ┌────────┴────────┐                      │
+│                          │    Client        │                      │
+│                          │  React + Nginx   │                      │
+│                          │  (80)            │                      │
+│                          └────────┬────────┘                      │
+│                                   │                                │
+└───────────────────────────────────┼────────────────────────────────┘
+                                    │ HTTPS
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              │                     │                      │
+       ┌──────┴──────┐      ┌──────┴──────┐      ┌──────┴──────┐
+       │   Agente 1  │      │   Agente 2  │      │   Agente N  │
+       │   Windows   │      │   Windows   │      │   Windows   │
+       │   (PCs)     │      │   (PCs)     │      │   (PCs)     │
+       └─────────────┘      └─────────────┘      └─────────────┘
 ```
+
+---
+
+## Stack Tecnologico
+
+| Componente | Tecnologia | Puerto |
+|------------|------------|--------|
+| **Server** | Node.js + Express + Prisma + Socket.IO | 3000 |
+| **Client** | React 18 + Vite + Material UI | 80 (nginx) |
+| **Agent** | Node.js + TypeScript (Windows) | - |
+| **Database** | PostgreSQL 16 | 5432 |
+| **Cache** | Redis 7 | 6379 |
+| **Auth** | JWT + Refresh Tokens | - |
+| **Realtime** | Socket.IO | - |
 
 ---
 
@@ -38,122 +58,112 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 ### Prerequisitos
 
 - Dokploy instalado y funcionando
-- Dominio configurado (opcional pero recomendado)
+- Dominio configurado (recomendado para SSL)
 - GitHub account con acceso al repositorio
+- OpenSSL instalado (para generar secrets)
 
-### Paso 1: Clonar el repositorio
+### Paso 1: Generar Secrets
+
+Antes de configurar las variables de entorno, genera secrets seguros:
 
 ```bash
-git clone https://github.com/brandall2021/remote-monitoring-platform.git
+# Generar JWT secrets (ejecutar 2 veces para obtener 2 secrets distintos)
+openssl rand -hex 32
+# Ejemplo输出: a1b2c3d4e5f6... (copiar cada resultado)
+
+# Generar token de registro de agentes
+openssl rand -hex 16
+# Ejemplo输出: f7e8d9c0b1a2... (copiar el resultado)
 ```
 
-### Paso 2: Crear servicios en Dokploy
+Necesitaras 3 valores:
+- `JWT_SECRET` (minimo 32 caracteres)
+- `JWT_REFRESH_SECRET` (minimo 32 caracteres)
+- `AGENT_REGISTRATION_TOKEN` (minimo 16 caracteres)
 
-#### Opcion A: Stack Completo (Recomendado)
+### Paso 2: Crear Proyecto en Dokploy
 
-Despliega Server + PostgreSQL + Redis juntos usando Docker Compose.
-
-1. En Dokploy ir a **Projects** > **Crear Proyecto**
+1. Ir a **Projects** > **Crear Proyecto**
 2. Nombrar el proyecto: `remote-monitoring`
 3. Ir a **Docker Compose** > **Crear servicio**
-4. Subir el archivo `docker-compose.dokploy.yml`
-5. Configurar las variables de entorno (ver abajo)
+4. Subir el archivo `docker-compose.dokploy.yml` del repositorio
+5. Configurar las variables de entorno (ver Paso 3)
 6. Hacer click en **Deploy**
-
-#### Opcion B: Servicios Separados
-
-Despliega cada servicio por separado para mayor control.
-
-**Paso 2.1: Crear PostgreSQL**
-
-1. Ir a **Database** > **Crear PostgreSQL**
-2. Nombre: `monitoring-postgres`
-3. Usuario: `postgres`
-4. Contrasena: (generar una segura)
-5. Base de datos: `remote_monitoring`
-6. **Deploy**
-7. Anotar el **Host** interno (ej: `monitoring-postgres`)
-
-**Paso 2.2: Crear Redis**
-
-1. Ir a **Database** > **Crear Redis**
-2. Nombre: `monitoring-redis`
-3. **Deploy**
-4. Anotar el **Host** interno (ej: `monitoring-redis`)
-
-**Paso 2.3: Crear Server**
-
-1. Ir a **Services** > **Crear servicio Docker**
-2. Nombre: `monitoring-server`
-3. Source: **GitHub**
-4. Repositorio: `brandall2021/remote-monitoring-platform`
-5. Rama: `master`
-6. Dockerfile: `server/Dockerfile`
-7. Puerto: `3000`
-8. Configurar variables de entorno (ver abajo)
-9. **Deploy**
 
 ### Paso 3: Variables de Entorno
 
-Copiar y configurar en Dokploy bajo la pestana **Environment** del servicio:
+Configurar en Dokploy bajo la pestana **Environment** del servicio:
 
 ```env
 # === BASE DE DATOS ===
-DATABASE_URL=postgresql://postgres:TU_CONTRASENA@monitoring-postgres:5432/remote_monitoring
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=tu-contrasena-segura-aqui
+POSTGRES_DB=remote_monitoring
 
-# === JWT (generar strings aleatorios de minimo 32 caracteres) ===
-JWT_SECRET=aqui-un-string-aleatorio-largo-min-32-chars-para-signing
-JWT_REFRESH_SECRET=aqui-otro-string-aleatorio-largo-min-32-chars
+# === JWT (usar los secrets generados en Paso 1) ===
+JWT_SECRET=tu-jwt-secret-generado-aqui-min-32-chars
+JWT_REFRESH_SECRET=tu-jwt-refresh-secret-generado-aqui-min-32-chars
 JWT_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 
-# === REDIS ===
-REDIS_URL=redis://monitoring-redis:6379
-
-# === SERVIDOR ===
-PORT=3000
-NODE_ENV=production
-
-# === CORS (tu dominio) ===
+# === CORS (tu dominio de Dokploy) ===
 CORS_ORIGIN=https://monitoring.tudominio.com
 
 # === AGENTE (token para registro de agentes) ===
-AGENT_REGISTRATION_TOKEN=generar-token-random-aqui-cambiar
+AGENT_REGISTRATION_TOKEN=tu-agent-registration-token-generado
 
-# === SCREENSHOTS ===
-SCREENSHOTS_DIR=./uploads/screenshots
+# === PUERTOS (opcional) ===
+PORT=3000
+CLIENT_PORT=80
 ```
 
-> **IMPORTANTE:** Cambiar los valores por defecto. Generar secrets seguros con:
-> ```bash
-> openssl rand -hex 32
-> ```
+> **IMPORTANTE:** Cambiar TODOS los valores por defecto. Nunca usar los valores de ejemplo en produccion.
 
 ### Paso 4: Configurar Dominio (SSL)
 
-1. En el servicio `monitoring-server`, ir a **Domains**
+1. En el servicio **client** (no el server), ir a **Domains**
 2. Agregar tu dominio: `monitoring.tudominio.com`
 3. Dokploy configura SSL automaticamente con Let's Encrypt
-4. Actualizar `CORS_ORIGIN` con el dominio configurado
+4. Actualizar `CORS_ORIGIN` en las variables de entorno con el dominio configurado
 
-### Paso 5: Verificar Deploy
+### Paso 5: Ejecutar Seed de Datos
 
-1. Ir a **Deployments** y verificar que todo este verde
-2. Abrir `https://monitoring.tudominio.com`
-3. Login por defecto:
-   - **Email:** `admin@monitoring.local`
-   - **Contrasena:** `admin123`
-4. **Cambiar la contrasena inmediatamente**
-
-### Paso 6: Seed de datos iniciales
-
-Despues del primer deploy, ejecutar en la consola de Dokploy del servicio server:
+Despues del primer deploy exitoso, ejecutar en la consola de Dokploy del servicio **server**:
 
 ```bash
 npx prisma db seed
 ```
 
-Esto crea los roles y el usuario admin por defecto.
+Esto crea:
+- 3 roles: `SUPER_ADMIN`, `ADMIN`, `OPERATOR`
+- Usuario admin por defecto:
+  - **Email:** `admin@monitoring.local`
+  - **Contrasena:** `admin123`
+
+### Paso 6: Verificar Deploy
+
+1. Ir a **Deployments** y verificar que todos los servicios esten verdes
+2. Abrir `https://monitoring.tudominio.com`
+3. Login con las credenciales del Paso 5
+4. **Cambiar la contrasena inmediatamente** desde el panel de usuarios
+
+---
+
+## Variables de Entorno - Referencia Completa
+
+| Variable | Requerida | Descripcion | Valor por defecto |
+|----------|:---------:|-------------|-------------------|
+| `POSTGRES_USER` | Si | Usuario de PostgreSQL | `postgres` |
+| `POSTGRES_PASSWORD` | Si | Contrasena de PostgreSQL | - |
+| `POSTGRES_DB` | No | Nombre de la base de datos | `remote_monitoring` |
+| `JWT_SECRET` | Si | Secret para firmar JWT (min 32 chars) | - |
+| `JWT_REFRESH_SECRET` | Si | Secret para refresh tokens (min 32 chars) | - |
+| `JWT_EXPIRES_IN` | No | Tiempo de vida del access token | `15m` |
+| `JWT_REFRESH_EXPIRES_IN` | No | Tiempo de vida del refresh token | `7d` |
+| `CORS_ORIGIN` | Si | Dominio permitido para CORS | - |
+| `AGENT_REGISTRATION_TOKEN` | Si | Token para registro de agentes | - |
+| `PORT` | No | Puerto del server | `3000` |
+| `CLIENT_PORT` | No | Puerto del cliente (nginx) | `80` |
 
 ---
 
@@ -172,7 +182,6 @@ El agente se instala en cada equipo corporativo que se desea monitorear. Se comu
 En una maquina con Node.js instalado:
 
 ```bash
-# Clonar solo la carpeta del agente
 git clone https://github.com/brandall2021/remote-monitoring-platform.git
 cd remote-monitoring-platform/agent
 ```
@@ -211,9 +220,7 @@ HEARTBEAT_INTERVAL=30000
 npm run build
 ```
 
-Esto genera la carpeta `dist/` con el codigo compilado.
-
-### Paso 5: Empaquetar como .exe (Opcion A - Recomendado)
+### Paso 5: Empaquetar como .exe (Recomendado)
 
 Usar `pkg` para crear un ejecutable standalone que NO requiere Node.js en el PC destino:
 
@@ -243,16 +250,7 @@ npx pkg dist/agent.js --targets node18-win-x64 --output remote-monitor-agent.exe
 
 #### Metodo 3: Instalacion como servicio Windows
 
-Para que el agente inicie automaticamente con Windows:
-
-```bash
-# Instalar node-windows
-npm install -g node-windows
-
-# Crear script de servicio (install-service.js)
-```
-
-Crear archivo `install-service.js`:
+Para que el agente inicie automaticamente con Windows, crear archivo `install-service.js`:
 
 ```javascript
 const Service = require('node-windows').Service;
@@ -351,8 +349,7 @@ remote-monitoring-platform/
 │   ├── prisma/
 │   │   ├── schema.prisma      # Modelo de base de datos
 │   │   └── seed.ts            # Datos iniciales
-│   ├── Dockerfile             # Para Dokploy
-│   ├── docker-compose.yml     # Solo server
+│   ├── Dockerfile             # Multi-stage build para Dokploy
 │   └── package.json
 │
 ├── client/                    # Frontend React
@@ -362,7 +359,8 @@ remote-monitoring-platform/
 │   │   ├── pages/             # Login, Dashboard, Devices, etc
 │   │   ├── services/          # API client, WebSocket
 │   │   └── types/             # Tipos TypeScript
-│   ├── Dockerfile             # Para Dokploy
+│   ├── Dockerfile             # Multi-stage build (Node + Nginx)
+│   ├── nginx.conf             # Reverse proxy al server
 │   └── package.json
 │
 ├── agent/                     # Agente Windows
@@ -372,6 +370,8 @@ remote-monitoring-platform/
 │   │   └── config.ts          # Configuracion local
 │   └── package.json
 │
+├── .dockerignore              # Exclude files from Docker build
+├── docker-compose.yml         # Stack completo para desarrollo local
 ├── docker-compose.dokploy.yml # Stack completo para Dokploy
 ├── dokploy.env.example        # Variables de entorno ejemplo
 └── README.md
@@ -432,6 +432,12 @@ remote-monitoring-platform/
 |--------|----------|---------|-------------|
 | `GET` | `/api/audit` | `AUDIT_READ` | Logs de auditoria |
 
+### Health Check
+
+| Metodo | Endpoint | Descripcion |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Estado del servidor |
+
 ---
 
 ## Roles y Permisos
@@ -457,7 +463,7 @@ remote-monitoring-platform/
 
 - **JWT + Refresh Tokens** para autenticacion stateless
 - **RBAC** (Role-Based Access Control) con 3 niveles
-- **Rate limiting** en endpoints sensibles (10 req/15min en login)
+- **Rate limiting** en endpoints sensibles (10 req/15min en login, 100 req/15min general)
 - **Helmet** para headers de seguridad HTTP
 - **CORS** configurado por dominio
 - **Auditoria completa** de todas las acciones
@@ -503,6 +509,46 @@ docker restart monitoring-server
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |
 | CORS error | Verificar `CORS_ORIGIN` coincide con el dominio |
 | DB connection fail | Verificar `DATABASE_URL` y que PostgreSQL este corriendo |
+| Seed no ejecuta | Verificar que las migraciones esten aplicadas primero |
+| Client no carga | Verificar que el server este corriendo y accesible |
+
+---
+
+## Desarrollo Local
+
+Para ejecutar el proyecto en local:
+
+```bash
+# Clonar repositorio
+git clone https://github.com/brandall2021/remote-monitoring-platform.git
+cd remote-monitoring-platform
+
+# Copiar variables de entorno
+cp dokploy.env.example .env
+
+# Levantar servicios (PostgreSQL + Redis)
+docker-compose up -d postgres redis
+
+# Instalar dependencias del server
+cd server && npm install
+
+# Ejecutar migraciones
+npx prisma migrate dev
+
+# Seed de datos
+npx prisma db seed
+
+# Iniciar server en desarrollo
+npm run dev
+
+# En otra terminal, instalar dependencias del client
+cd ../client && npm install
+
+# Iniciar client en desarrollo
+npm run dev
+```
+
+El client estara disponible en `http://localhost:5173` y el server en `http://localhost:3000`.
 
 ---
 

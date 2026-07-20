@@ -61,6 +61,18 @@ services:
     networks:
       - monitoring
 
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${CLIENT_PORT:-80}:80"
+    depends_on:
+      - server
+    networks:
+      - monitoring
+
 networks:
   monitoring:
     driver: bridge
