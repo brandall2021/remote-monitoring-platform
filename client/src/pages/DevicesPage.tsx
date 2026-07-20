@@ -1,125 +1,213 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
   Typography,
   Button,
-  DataGrid,
-  Chip,
   IconButton,
   Tooltip,
-  LinearProgress,
+  TextField,
+  InputAdornment,
 } from "@mui/material";
-import { Refresh, Visibility, Delete, Computer } from "@mui/icons-material";
-import { devicesAPI } from "../services/api";
-import { Device } from "../types";
+import { DataGrid, GridColDef } from "@mui/x-data-grid";
+import { Refresh, Visibility, Search, Computer } from "@mui/icons-material";
+import { devicesAPI, Device } from "../services/api";
+import PageHeader from "../components/PageHeader";
+import ErrorState from "../components/ErrorState";
+import EmptyState from "../components/EmptyState";
+import StatusBadge from "../components/StatusBadge";
 
 export default function DevicesPage() {
   const navigate = useNavigate();
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pagination, setPagination] = useState({ total: 0, page: 1, pages: 1 });
+  const [error, setError] = useState<string | null>(null);
+  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 20 });
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState("");
 
-  const loadDevices = async (page = 1) => {
+  const loadDevices = useCallback(async (page = 1) => {
     setLoading(true);
+    setError(null);
     try {
       const { data } = await devicesAPI.list(page);
       setDevices(data.devices);
-      setPagination(data.pagination);
+      setTotal(data.total);
+      setPaginationModel((prev) => ({ ...prev, page: page - 1 }));
+    } catch {
+      setError("Failed to load devices. Please try again.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDevices();
-  }, []);
+  }, [loadDevices]);
 
-  const columns = [
+  const filteredDevices = devices.filter(
+    (d) =>
+      d.hostname.toLowerCase().includes(search.toLowerCase()) ||
+      d.ipAddress.includes(search) ||
+      d.operatingSystem.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const columns: GridColDef[] = [
     {
       field: "hostname",
       headerName: "Hostname",
+      type: "string",
       flex: 1,
-      renderCell: (params: any) => (
-        <Typography fontWeight="bold">{params.value}</Typography>
+      minWidth: 150,
+      renderCell: (params) => (
+        <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{params.value}</Typography>
       ),
     },
     {
       field: "status",
       headerName: "Status",
+      type: "string",
       width: 120,
-      renderCell: (params: any) => (
-        <Chip
-          label={params.value}
-          color={params.value === "ONLINE" ? "success" : "error"}
-          size="small"
-          variant="outlined"
-        />
+      renderCell: (params) => (
+        <StatusBadge status={(params.value || "OFFLINE").toLowerCase() as "online" | "offline"} />
       ),
     },
-    { field: "operatingSystem", headerName: "OS", width: 150 },
-    { field: "ipAddress", headerName: "IP Address", width: 150 },
+    {
+      field: "operatingSystem",
+      headerName: "OS",
+      type: "string",
+      width: 140,
+      renderCell: (params: { row: Device }) => (
+        <Typography variant="body2" color="text.secondary">
+          {params.row.operatingSystem} {params.row.osVersion || ""}
+        </Typography>
+      ),
+    },
+    {
+      field: "ipAddress",
+      headerName: "IP Address",
+      type: "string",
+      width: 140,
+      renderCell: (params) => (
+        <Typography variant="body2" sx={{ fontFamily: '"Geist Mono", monospace', fontSize: "0.8125rem" }}>
+          {params.value}
+        </Typography>
+      ),
+    },
     {
       field: "agentVersion",
       headerName: "Agent",
+      type: "string",
       width: 100,
-      renderCell: (params: any) => params.value || "-",
+      renderCell: (params: { value?: string }) => (
+        <Typography variant="body2" color="text.secondary">
+          {params.value || "-"}
+        </Typography>
+      ),
     },
     {
       field: "lastSeenAt",
       headerName: "Last Seen",
-      width: 180,
-      renderCell: (params: any) =>
-        params.value ? new Date(params.value).toLocaleString() : "Never",
+      type: "string",
+      width: 170,
+      renderCell: (params: { value?: string }) => (
+        <Typography variant="body2" color="text.secondary">
+          {params.value ? new Date(params.value).toLocaleString() : "Never"}
+        </Typography>
+      ),
     },
     {
       field: "actions",
-      headerName: "Actions",
-      width: 120,
-      renderCell: (params: any) => (
-        <>
-          <Tooltip title="View Details">
-            <IconButton
-              size="small"
-              onClick={() => navigate(`/devices/${params.row.id}`)}
-            >
-              <Visibility />
-            </IconButton>
-          </Tooltip>
-        </>
+      headerName: "",
+      type: "string",
+      width: 56,
+      sortable: false,
+      renderCell: (params: { row: Device }) => (
+        <Tooltip title="View details">
+          <IconButton
+            size="small"
+            onClick={() => navigate(`/devices/${params.row.id}`)}
+            aria-label={`View details for ${params.row.hostname}`}
+          >
+            <Visibility fontSize="small" />
+          </IconButton>
+        </Tooltip>
       ),
     },
   ];
 
   return (
     <Box>
-      <Box sx={{ display: "flex", justifyContent: "space-between", mb: 3 }}>
-        <Typography variant="h4" fontWeight="bold">
-          Devices
-        </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<Refresh />}
-          onClick={() => loadDevices()}
-        >
-          Refresh
-        </Button>
-      </Box>
-      {loading && <LinearProgress />}
-      <Box sx={{ height: 600, width: "100%" }}>
-        <DataGrid
-          rows={devices}
-          columns={columns}
-          loading={loading}
-          paginationMode="server"
-          rowCount={pagination.total}
-          page={pagination.page - 1}
-          pageSize={20}
-          onPageModelChange={(model) => loadDevices(model.page + 1)}
-          disableColumnFilter
-          disableRowSelectionOnClick
+      <PageHeader
+        title="Devices"
+        description="Manage and monitor your corporate devices"
+        action={
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={() => loadDevices(paginationModel.page + 1)}
+            sx={{ borderColor: "divider", color: "text.secondary" }}
+          >
+            Refresh
+          </Button>
+        }
+      />
+
+      {error && <ErrorState message={error} onRetry={() => loadDevices()} />}
+
+      {!error && devices.length === 0 && !loading ? (
+        <EmptyState
+          icon={<Computer />}
+          title="No devices registered"
+          description="Deploy agents to your corporate devices to start monitoring."
         />
-      </Box>
+      ) : (
+        <>
+          <Box sx={{ mb: 2 }}>
+            <TextField
+              size="small"
+              placeholder="Search by hostname, IP, or OS..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              sx={{ minWidth: 300 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search fontSize="small" sx={{ color: "text.secondary" }} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Box>
+          <Box sx={{ height: 600, width: "100%" }}>
+            <DataGrid
+              rows={filteredDevices}
+              columns={columns}
+              loading={loading}
+              paginationMode="server"
+              rowCount={total}
+              paginationModel={paginationModel}
+              onPaginationModelChange={(model) => {
+                setPaginationModel(model);
+                loadDevices(model.page + 1);
+              }}
+              disableColumnFilter
+              disableRowSelectionOnClick
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 2,
+                "& .MuiDataGrid-cell": {
+                  borderColor: "divider",
+                },
+                "& .MuiDataGrid-columnHeaders": {
+                  backgroundColor: "rgba(30, 41, 59, 0.5)",
+                },
+              }}
+            />
+          </Box>
+        </>
+      )}
     </Box>
   );
 }

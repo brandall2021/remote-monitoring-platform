@@ -82,14 +82,10 @@ export interface AuditLog {
   user?: { username: string; email: string };
 }
 
-export interface PaginatedResponse<T> {
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    pages: number;
-  };
-  [key: string]: any;
+export interface PaginatedResponse {
+  total: number;
+  page: number;
+  pages: number;
 }
 
 export interface DeviceStats {

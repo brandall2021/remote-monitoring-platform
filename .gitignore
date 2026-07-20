@@ -10,3 +10,5 @@ server/node_modules/
 server/dist/
 agent/node_modules/
 agent/dist/
+__pycache__/
+*.tsbuildinfo

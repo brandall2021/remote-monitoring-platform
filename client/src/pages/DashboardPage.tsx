@@ -1,47 +1,69 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Box,
   Grid,
   Card,
   CardContent,
   Typography,
-  Chip,
-  LinearProgress,
+  CircularProgress,
+  Button,
 } from "@mui/material";
-import {
-  Computer,
-  CheckCircle,
-  Cancel,
-  CameraAlt,
-  Terminal,
-} from "@mui/icons-material";
-import { devicesAPI } from "../services/api";
-import { DeviceStats } from "../types";
+import { Computer, CheckCircle, Cancel, Refresh } from "@mui/icons-material";
+import { devicesAPI, DeviceStats } from "../services/api";
+import PageHeader from "../components/PageHeader";
+import AnimatedCounter from "../components/AnimatedCounter";
+import ErrorState from "../components/ErrorState";
+import EmptyState from "../components/EmptyState";
 
 function StatCard({
   title,
   value,
   icon,
   color,
+  delay,
 }: {
   title: string;
   value: number;
   icon: React.ReactNode;
   color: string;
+  delay: number;
 }) {
   return (
-    <Card>
-      <CardContent>
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+    <Card
+      sx={{
+        animation: `fadeIn 0.4s ease-out ${delay}ms both`,
+        "@keyframes fadeIn": {
+          from: { opacity: 0, transform: "translateY(12px)" },
+          to: { opacity: 1, transform: "translateY(0)" },
+        },
+      }}
+    >
+      <CardContent sx={{ p: 3 }}>
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <Box>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 500 }}>
               {title}
             </Typography>
-            <Typography variant="h3" fontWeight="bold">
-              {value}
-            </Typography>
+            <AnimatedCounter
+              value={value}
+              typographyProps={{
+                variant: "h3",
+                sx: { fontWeight: 700, color: "text.primary" },
+              }}
+            />
           </Box>
-          <Box sx={{ color, fontSize: 48 }}>{icon}</Box>
+          <Box
+            sx={{
+              p: 1.5,
+              borderRadius: 2.5,
+              backgroundColor: `${color}10`,
+              color: color,
+              display: "flex",
+              "& svg": { fontSize: 24 },
+            }}
+          >
+            {icon}
+          </Box>
         </Box>
       </CardContent>
     </Card>
@@ -51,52 +73,93 @@ function StatCard({
 export default function DashboardPage() {
   const [stats, setStats] = useState<DeviceStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    devicesAPI.stats().then((res) => {
-      setStats(res.data);
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await devicesAPI.stats();
+      setStats(data);
+    } catch (err) {
+      setError("Failed to load dashboard statistics. Please try again.");
+    } finally {
       setLoading(false);
-    });
+    }
   }, []);
 
-  if (loading) return <LinearProgress />;
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  if (loading) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
+        <CircularProgress size={32} sx={{ color: "primary.main" }} />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return <ErrorState message={error} onRetry={loadStats} />;
+  }
+
+  if (!stats || (stats.total === 0)) {
+    return (
+      <>
+        <PageHeader title="Dashboard" description="Overview of your monitored devices" />
+        <EmptyState
+          icon={<Computer />}
+          title="No devices yet"
+          description="Start monitoring by deploying agents to your corporate devices."
+        />
+      </>
+    );
+  }
 
   return (
     <Box>
-      <Typography variant="h4" fontWeight="bold" gutterBottom>
-        Dashboard
-      </Typography>
+      <PageHeader
+        title="Dashboard"
+        description="Overview of your monitored devices"
+        action={
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={loadStats}
+            sx={{ borderColor: "divider", color: "text.secondary" }}
+          >
+            Refresh
+          </Button>
+        }
+      />
+
       <Grid container spacing={3}>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={4}>
           <StatCard
             title="Total Devices"
-            value={stats?.total || 0}
+            value={stats.total}
             icon={<Computer />}
-            color="primary.main"
+            color="#3B82F6"
+            delay={0}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={4}>
           <StatCard
             title="Online"
-            value={stats?.online || 0}
+            value={stats.online}
             icon={<CheckCircle />}
-            color="success.main"
+            color="#22C55E"
+            delay={80}
           />
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={4}>
           <StatCard
             title="Offline"
-            value={stats?.offline || 0}
+            value={stats.offline}
             icon={<Cancel />}
-            color="error.main"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Commands (24h)"
-            value={stats?.recentCommands || 0}
-            icon={<Terminal />}
-            color="warning.main"
+            color="#EF4444"
+            delay={160}
           />
         </Grid>
       </Grid>
