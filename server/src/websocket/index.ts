@@ -147,6 +147,8 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
     const deviceId = socket.deviceId!;
     console.log(`[AGENT] Connected: ${deviceId}`);
 
+    socket.join(deviceId);
+
     await deviceService.heartbeat(deviceId, socket.handshake.auth.agentVersion || "unknown");
 
     adminNamespace.emit("device-status", {
