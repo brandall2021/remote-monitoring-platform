@@ -237,6 +237,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
 
     socket.on("live-frame-result", (data: {
       imageBase64?: string;
+      mimeType?: string;
       width?: number;
       height?: number;
     }) => {
@@ -244,6 +245,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
       adminNamespace.to(`live:${deviceId}`).emit("live-frame", {
         deviceId,
         imageBase64: data.imageBase64,
+        mimeType: data.mimeType || "image/jpeg",
         width: data.width,
         height: data.height,
       });

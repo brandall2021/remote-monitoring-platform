@@ -3,6 +3,7 @@ import axios from "axios";
 import { AgentConfig, loadConfig, saveConfig, getSystemInfo, generateDeviceId } from "./config";
 import {
   takeScreenshot,
+  takeLiveFrame,
   getSystemInfo as getDetailedSystemInfo,
   getProcessList,
   lockScreen,
@@ -97,9 +98,10 @@ async function handleLiveCommand(): Promise<void> {
 
   isCapturing = true;
   try {
-    const result = await takeScreenshot();
+    const result = await takeLiveFrame();
     socket.emit("live-frame-result", {
       imageBase64: result.imageBase64,
+      mimeType: result.mimeType,
       width: result.width,
       height: result.height,
     });

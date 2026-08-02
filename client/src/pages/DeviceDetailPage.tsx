@@ -87,9 +87,9 @@ export default function DeviceDetailPage() {
     if (!token) return;
     const socket = getAdminSocket(token);
 
-    const onFrame = (data: { deviceId: string; imageBase64: string }) => {
+    const onFrame = (data: { deviceId: string; imageBase64: string; mimeType?: string }) => {
       if (data.deviceId !== id) return;
-      setLiveFrame(`data:image/png;base64,${data.imageBase64}`);
+      setLiveFrame(`data:${data.mimeType || "image/jpeg"};base64,${data.imageBase64}`);
       setLiveError(null);
     };
     const onFrameError = (data: { deviceId: string; error: string }) => {
