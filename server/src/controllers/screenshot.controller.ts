@@ -1,5 +1,6 @@
 import { Response } from "express";
 import { screenshotService } from "../services/screenshot.service";
+import { emitCommandToAgent } from "../websocket";
 import { AuthRequest } from "../middleware/auth";
 
 export class ScreenshotController {
@@ -20,6 +21,13 @@ export class ScreenshotController {
         deviceId,
         req.user.userId,
         reason || "No reason provided"
+      );
+
+      emitCommandToAgent(
+        deviceId,
+        command.id,
+        "SCREENSHOT",
+        command.payload as Record<string, unknown> | undefined
       );
 
       res.status(201).json(command);

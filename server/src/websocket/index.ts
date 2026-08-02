@@ -1,4 +1,4 @@
-import { Server as SocketIOServer, Socket } from "socket.io";
+import { Server as SocketIOServer, Namespace, Socket } from "socket.io";
 import { Server as HttpServer } from "http";
 import { verifyAccessToken } from "../security/jwt";
 import { deviceService } from "../services/device.service";
@@ -14,6 +14,18 @@ interface AgentSocket extends Socket {
   userId?: string;
 }
 
+let agentNamespace: Namespace | null = null;
+
+export function emitCommandToAgent(
+  deviceId: string,
+  commandId: string,
+  type: string,
+  payload?: Record<string, unknown>
+): void {
+  if (!agentNamespace) return;
+  agentNamespace.to(deviceId).emit("command", { commandId, type, payload });
+}
+
 export function setupWebSocket(server: HttpServer): SocketIOServer {
   const io = new SocketIOServer(server, {
     cors: {
@@ -25,7 +37,8 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
   });
 
   const adminNamespace = io.of("/admin");
-  const agentNamespace = io.of("/agent");
+  const agentNs = io.of("/agent");
+  agentNamespace = agentNs;
 
   adminNamespace.use(async (socket: AgentSocket, next) => {
     try {
@@ -44,7 +57,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
     }
   });
 
-  agentNamespace.use(async (socket: AgentSocket, next) => {
+  agentNs.use(async (socket: AgentSocket, next) => {
     try {
       const { deviceId, token } = socket.handshake.auth;
       if (!deviceId || !token) {
@@ -79,7 +92,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
           data.reason || "Admin requested screenshot"
         );
 
-        agentNamespace.to(data.deviceId).emit("command", {
+        agentNs.to(data.deviceId).emit("command", {
           commandId: command.id,
           type: CommandType.SCREENSHOT,
           payload: command.payload,
@@ -109,7 +122,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
           payload: data.payload,
         });
 
-        agentNamespace.to(data.deviceId).emit("command", {
+        agentNs.to(data.deviceId).emit("command", {
           commandId: command.id,
           type: data.commandType,
           payload: data.payload,
@@ -130,7 +143,7 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
     });
   });
 
-  agentNamespace.on("connection", async (socket: AgentSocket) => {
+  agentNs.on("connection", async (socket: AgentSocket) => {
     const deviceId = socket.deviceId!;
     console.log(`[AGENT] Connected: ${deviceId}`);
 
