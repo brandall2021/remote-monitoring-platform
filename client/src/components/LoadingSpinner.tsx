@@ -5,7 +5,7 @@ interface LoadingSpinnerProps {
   fullScreen?: boolean;
 }
 
-export default function LoadingSpinner({ message = "Loading...", fullScreen = false }: LoadingSpinnerProps) {
+export default function LoadingSpinner({ message = "Cargando...", fullScreen = false }: LoadingSpinnerProps) {
   return (
     <Box
       sx={{

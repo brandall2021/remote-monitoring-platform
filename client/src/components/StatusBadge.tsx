@@ -24,7 +24,7 @@ export default function StatusBadge({ status, label, size = "small" }: StatusBad
         }}
       />
       <Typography variant="body2" sx={{ fontSize, color: isOnline ? "text.primary" : "text.secondary" }}>
-        {label || (isOnline ? "Online" : "Offline")}
+        {label || (isOnline ? "En línea" : "Desconectado")}
       </Typography>
     </Box>
   );

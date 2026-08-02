@@ -37,7 +37,7 @@ export default function AuditPage() {
       setTotal(data.total);
       setPaginationModel((prev) => ({ ...prev, page: page - 1 }));
     } catch {
-      setError("Failed to load audit logs.");
+      setError("Error al cargar los registros de auditoría.");
     } finally {
       setLoading(false);
     }
@@ -50,7 +50,7 @@ export default function AuditPage() {
   const columns: GridColDef[] = [
     {
       field: "createdAt",
-      headerName: "Date",
+      headerName: "Fecha",
       type: "string",
       width: 180,
       renderCell: (params) => (
@@ -66,13 +66,13 @@ export default function AuditPage() {
       width: 150,
       renderCell: (params) => (
         <Typography variant="body2" sx={{ fontWeight: 500 }}>
-          {params.value?.username || "System"}
+          {params.value?.username || "Sistema"}
         </Typography>
       ),
     },
     {
       field: "action",
-      headerName: "Action",
+      headerName: "Acción",
       type: "string",
       width: 130,
       renderCell: (params) => (
@@ -93,7 +93,7 @@ export default function AuditPage() {
     },
     {
       field: "resource",
-      headerName: "Resource",
+      headerName: "Recurso",
       type: "string",
       width: 130,
       renderCell: (params) => (
@@ -102,7 +102,7 @@ export default function AuditPage() {
     },
     {
       field: "resourceId",
-      headerName: "Resource ID",
+      headerName: "ID del Recurso",
       type: "string",
       width: 120,
       renderCell: (params) => (
@@ -113,7 +113,7 @@ export default function AuditPage() {
     },
     {
       field: "ipAddress",
-      headerName: "IP Address",
+      headerName: "Dirección IP",
       type: "string",
       width: 140,
       renderCell: (params) => (
@@ -127,8 +127,8 @@ export default function AuditPage() {
   return (
     <Box>
       <PageHeader
-        title="Audit Log"
-        description="Track all system actions and changes"
+        title="Registro de Auditoría"
+        description="Seguimiento de todas las acciones y cambios del sistema"
         action={
           <Button
             variant="outlined"
@@ -136,7 +136,7 @@ export default function AuditPage() {
             onClick={() => loadLogs()}
             sx={{ borderColor: "divider", color: "text.secondary" }}
           >
-            Refresh
+            Actualizar
           </Button>
         }
       />
@@ -148,7 +148,7 @@ export default function AuditPage() {
               <TextField
                 fullWidth
                 size="small"
-                label="Action"
+                label="Acción"
                 value={filters.action}
                 onChange={(e) => setFilters({ ...filters, action: e.target.value })}
               />
@@ -157,7 +157,7 @@ export default function AuditPage() {
               <TextField
                 fullWidth
                 size="small"
-                label="Resource"
+                label="Recurso"
                 value={filters.resource}
                 onChange={(e) => setFilters({ ...filters, resource: e.target.value })}
               />
@@ -166,7 +166,7 @@ export default function AuditPage() {
               <TextField
                 fullWidth
                 size="small"
-                label="Start Date"
+                label="Fecha Inicio"
                 type="date"
                 InputLabelProps={{ shrink: true }}
                 value={filters.startDate}
@@ -177,7 +177,7 @@ export default function AuditPage() {
               <TextField
                 fullWidth
                 size="small"
-                label="End Date"
+                label="Fecha Fin"
                 type="date"
                 InputLabelProps={{ shrink: true }}
                 value={filters.endDate}
@@ -186,7 +186,7 @@ export default function AuditPage() {
             </Grid>
             <Grid item xs={12} sm={2}>
               <Button fullWidth variant="contained" startIcon={<Search />} onClick={() => loadLogs()}>
-                Search
+                Buscar
               </Button>
             </Grid>
           </Grid>
@@ -198,8 +198,8 @@ export default function AuditPage() {
       {!error && logs.length === 0 && !loading ? (
         <EmptyState
           icon={<Assessment />}
-          title="No audit logs"
-          description="Actions performed in the system will appear here."
+          title="Sin registros de auditoría"
+          description="Las acciones realizadas en el sistema aparecerán aquí."
         />
       ) : (
         <Box sx={{ height: 600, width: "100%" }}>

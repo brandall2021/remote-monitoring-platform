@@ -82,7 +82,7 @@ export default function DashboardPage() {
       const { data } = await devicesAPI.stats();
       setStats(data);
     } catch (err) {
-      setError("Failed to load dashboard statistics. Please try again.");
+      setError("Error al cargar las estadísticas del panel. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -107,11 +107,11 @@ export default function DashboardPage() {
   if (!stats || (stats.total === 0)) {
     return (
       <>
-        <PageHeader title="Dashboard" description="Overview of your monitored devices" />
+        <PageHeader title="Panel" description="Resumen de tus dispositivos monitoreados" />
         <EmptyState
           icon={<Computer />}
-          title="No devices yet"
-          description="Start monitoring by deploying agents to your corporate devices."
+          title="Aún no hay dispositivos"
+          description="Comienza a monitorear implementando agentes en tus dispositivos corporativos."
         />
       </>
     );
@@ -120,8 +120,8 @@ export default function DashboardPage() {
   return (
     <Box>
       <PageHeader
-        title="Dashboard"
-        description="Overview of your monitored devices"
+        title="Panel"
+        description="Resumen de tus dispositivos monitoreados"
         action={
           <Button
             variant="outlined"
@@ -129,7 +129,7 @@ export default function DashboardPage() {
             onClick={loadStats}
             sx={{ borderColor: "divider", color: "text.secondary" }}
           >
-            Refresh
+            Actualizar
           </Button>
         }
       />
@@ -137,7 +137,7 @@ export default function DashboardPage() {
       <Grid container spacing={3}>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard
-            title="Total Devices"
+            title="Total de Dispositivos"
             value={stats.total}
             icon={<Computer />}
             color="#3B82F6"
@@ -146,7 +146,7 @@ export default function DashboardPage() {
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard
-            title="Online"
+            title="En línea"
             value={stats.online}
             icon={<CheckCircle />}
             color="#22C55E"
@@ -155,7 +155,7 @@ export default function DashboardPage() {
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard
-            title="Offline"
+            title="Desconectados"
             value={stats.offline}
             icon={<Cancel />}
             color="#EF4444"

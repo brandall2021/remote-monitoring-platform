@@ -36,13 +36,13 @@ function NotFoundPage() {
         404
       </Typography>
       <Typography variant="h6" sx={{ mb: 1, color: "text.primary" }}>
-        Page not found
+        Página no encontrada
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        The page you are looking for does not exist or has been moved.
+        La página que buscas no existe o fue movida.
       </Typography>
       <Button component={Link} to="/" variant="contained">
-        Back to Dashboard
+        Volver al Panel
       </Button>
     </Box>
   );

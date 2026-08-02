@@ -35,7 +35,7 @@ export default function DevicesPage() {
       setTotal(data.total);
       setPaginationModel((prev) => ({ ...prev, page: page - 1 }));
     } catch {
-      setError("Failed to load devices. Please try again.");
+      setError("Error al cargar los dispositivos. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -65,7 +65,7 @@ export default function DevicesPage() {
     },
     {
       field: "status",
-      headerName: "Status",
+      headerName: "Estado",
       type: "string",
       width: 120,
       renderCell: (params) => (
@@ -85,7 +85,7 @@ export default function DevicesPage() {
     },
     {
       field: "ipAddress",
-      headerName: "IP Address",
+      headerName: "Dirección IP",
       type: "string",
       width: 140,
       renderCell: (params) => (
@@ -96,7 +96,7 @@ export default function DevicesPage() {
     },
     {
       field: "agentVersion",
-      headerName: "Agent",
+      headerName: "Agente",
       type: "string",
       width: 100,
       renderCell: (params: { value?: string }) => (
@@ -107,7 +107,7 @@ export default function DevicesPage() {
     },
     {
       field: "lastSeenAt",
-      headerName: "Last Seen",
+      headerName: "Última Conexión",
       type: "string",
       width: 170,
       renderCell: (params: { value?: string }) => (
@@ -123,7 +123,7 @@ export default function DevicesPage() {
       width: 56,
       sortable: false,
       renderCell: (params: { row: Device }) => (
-        <Tooltip title="View details">
+        <Tooltip title="Ver detalles">
           <IconButton
             size="small"
             onClick={() => navigate(`/devices/${params.row.id}`)}
@@ -139,8 +139,8 @@ export default function DevicesPage() {
   return (
     <Box>
       <PageHeader
-        title="Devices"
-        description="Manage and monitor your corporate devices"
+        title="Dispositivos"
+        description="Gestiona y monitorea tus dispositivos corporativos"
         action={
           <Button
             variant="outlined"
@@ -148,7 +148,7 @@ export default function DevicesPage() {
             onClick={() => loadDevices(paginationModel.page + 1)}
             sx={{ borderColor: "divider", color: "text.secondary" }}
           >
-            Refresh
+            Actualizar
           </Button>
         }
       />
@@ -158,15 +158,15 @@ export default function DevicesPage() {
       {!error && devices.length === 0 && !loading ? (
         <EmptyState
           icon={<Computer />}
-          title="No devices registered"
-          description="Deploy agents to your corporate devices to start monitoring."
+          title="No hay dispositivos registrados"
+          description="Implementa agentes en tus dispositivos corporativos para comenzar a monitorear."
         />
       ) : (
         <>
           <Box sx={{ mb: 2 }}>
             <TextField
               size="small"
-              placeholder="Search by hostname, IP, or OS..."
+              placeholder="Buscar por hostname, IP o sistema operativo..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               sx={{ minWidth: 300 }}

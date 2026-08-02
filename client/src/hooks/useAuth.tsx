@@ -52,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        "Login failed. Please check your credentials.";
+        "Error al iniciar sesión. Verifica tus credenciales.";
       setError(message);
       throw err;
     }

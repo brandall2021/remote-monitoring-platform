@@ -57,7 +57,7 @@ export default function UsersPage() {
       setTotal(data.total);
       setPaginationModel((prev) => ({ ...prev, page: page - 1 }));
     } catch {
-      setError("Failed to load users.");
+      setError("Error al cargar los usuarios.");
     } finally {
       setLoading(false);
     }
@@ -69,13 +69,13 @@ export default function UsersPage() {
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
-    if (!formData.email) errors.email = "Email is required";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) errors.email = "Invalid email format";
-    if (!editingUser && !formData.username) errors.username = "Username is required";
-    if (!editingUser && !formData.password) errors.password = "Password is required";
-    else if (!editingUser && formData.password.length < 6) errors.password = "Password must be at least 6 characters";
-    if (!formData.firstName) errors.firstName = "First name is required";
-    if (!formData.lastName) errors.lastName = "Last name is required";
+    if (!formData.email) errors.email = "El correo es obligatorio";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) errors.email = "Formato de correo inválido";
+    if (!editingUser && !formData.username) errors.username = "El nombre de usuario es obligatorio";
+    if (!editingUser && !formData.password) errors.password = "La contraseña es obligatoria";
+    else if (!editingUser && formData.password.length < 6) errors.password = "La contraseña debe tener al menos 6 caracteres";
+    if (!formData.firstName) errors.firstName = "El nombre es obligatorio";
+    if (!formData.lastName) errors.lastName = "El apellido es obligatorio";
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -90,7 +90,7 @@ export default function UsersPage() {
           firstName: formData.firstName,
           lastName: formData.lastName,
         });
-        setSnackbar({ open: true, message: "User updated successfully", severity: "success" });
+        setSnackbar({ open: true, message: "Usuario actualizado correctamente", severity: "success" });
       } else {
         await usersAPI.create({
           email: formData.email,
@@ -100,13 +100,13 @@ export default function UsersPage() {
           lastName: formData.lastName,
           roleId: formData.roleId || "OPERATOR",
         });
-        setSnackbar({ open: true, message: "User created successfully", severity: "success" });
+        setSnackbar({ open: true, message: "Usuario creado correctamente", severity: "success" });
       }
       setDialogOpen(false);
       resetForm();
       loadUsers();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Error saving user";
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Error al guardar el usuario";
       setSnackbar({ open: true, message: msg, severity: "error" });
     } finally {
       setSaving(false);
@@ -117,12 +117,12 @@ export default function UsersPage() {
     if (!deletingUser) return;
     try {
       await usersAPI.delete(deletingUser.id);
-      setSnackbar({ open: true, message: "User deleted", severity: "success" });
+      setSnackbar({ open: true, message: "Usuario eliminado", severity: "success" });
       setDeleteDialogOpen(false);
       setDeletingUser(null);
       loadUsers();
     } catch {
-      setSnackbar({ open: true, message: "Failed to delete user", severity: "error" });
+      setSnackbar({ open: true, message: "Error al eliminar el usuario", severity: "error" });
     }
   };
 
@@ -149,7 +149,7 @@ export default function UsersPage() {
   const columns: GridColDef[] = [
     {
       field: "username",
-      headerName: "Username",
+      headerName: "Usuario",
       type: "string",
       flex: 1,
       minWidth: 120,
@@ -159,14 +159,14 @@ export default function UsersPage() {
     },
     {
       field: "email",
-      headerName: "Email",
+      headerName: "Correo",
       type: "string",
       flex: 1.5,
       minWidth: 180,
     },
     {
       field: "firstName",
-      headerName: "Name",
+      headerName: "Nombre",
       type: "string",
       flex: 1,
       minWidth: 130,
@@ -174,7 +174,7 @@ export default function UsersPage() {
     },
     {
       field: "role",
-      headerName: "Role",
+      headerName: "Rol",
       type: "string",
       width: 140,
       renderCell: (params: { value?: { name: string } }) => (
@@ -195,7 +195,7 @@ export default function UsersPage() {
     },
     {
       field: "isActive",
-      headerName: "Status",
+      headerName: "Estado",
       type: "string",
       width: 100,
       renderCell: (params) => (
@@ -210,7 +210,7 @@ export default function UsersPage() {
             color: params.value ? "success.main" : "error.main",
           }}
         >
-          {params.value ? "Active" : "Inactive"}
+          {params.value ? "Activo" : "Inactivo"}
         </Typography>
       ),
     },
@@ -222,19 +222,19 @@ export default function UsersPage() {
       sortable: false,
       renderCell: (params: { row: User }) => (
         <>
-          <Tooltip title="Edit">
-            <IconButton size="small" onClick={() => handleEdit(params.row)} aria-label={`Edit ${params.row.username}`}>
+          <Tooltip title="Editar">
+            <IconButton size="small" onClick={() => handleEdit(params.row)} aria-label={`Editar ${params.row.username}`}>
               <Edit fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Delete">
+          <Tooltip title="Eliminar">
             <IconButton
               size="small"
               onClick={() => {
                 setDeletingUser(params.row);
                 setDeleteDialogOpen(true);
               }}
-              aria-label={`Delete ${params.row.username}`}
+              aria-label={`Eliminar ${params.row.username}`}
             >
               <Delete fontSize="small" />
             </IconButton>
@@ -247,8 +247,8 @@ export default function UsersPage() {
   return (
     <Box>
       <PageHeader
-        title="Users"
-        description="Manage admin accounts and permissions"
+        title="Usuarios"
+        description="Gestiona las cuentas de administrador y sus permisos"
         action={
           <Button
             variant="contained"
@@ -258,7 +258,7 @@ export default function UsersPage() {
               setDialogOpen(true);
             }}
           >
-            Add User
+            Agregar Usuario
           </Button>
         }
       />
@@ -268,11 +268,11 @@ export default function UsersPage() {
       {!error && users.length === 0 && !loading ? (
         <EmptyState
           icon={<People />}
-          title="No users yet"
-          description="Create the first admin user to get started."
+          title="Aún no hay usuarios"
+          description="Crea el primer usuario administrador para comenzar."
           action={
             <Button variant="contained" startIcon={<Add />} onClick={() => { resetForm(); setDialogOpen(true); }}>
-              Add User
+              Agregar Usuario
             </Button>
           }
         />
@@ -301,7 +301,7 @@ export default function UsersPage() {
       )}
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 600 }}>{editingUser ? "Edit User" : "Create User"}</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600 }}>{editingUser ? "Editar Usuario" : "Crear Usuario"}</DialogTitle>
         <DialogContent sx={{ pt: "16px !important" }}>
           <TextField
             fullWidth
@@ -316,7 +316,7 @@ export default function UsersPage() {
           {!editingUser && (
             <TextField
               fullWidth
-              label="Username"
+              label="Nombre de usuario"
               value={formData.username}
               onChange={(e) => setFormData({ ...formData, username: e.target.value })}
               error={!!formErrors.username}
@@ -327,7 +327,7 @@ export default function UsersPage() {
           {!editingUser && (
             <TextField
               fullWidth
-              label="Password"
+              label="Contraseña"
               type="password"
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -338,7 +338,7 @@ export default function UsersPage() {
           )}
           <TextField
             fullWidth
-            label="First Name"
+            label="Nombre"
             value={formData.firstName}
             onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
             error={!!formErrors.firstName}
@@ -347,38 +347,38 @@ export default function UsersPage() {
           />
           <TextField
             fullWidth
-            label="Last Name"
+            label="Apellido"
             value={formData.lastName}
             onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
             error={!!formErrors.lastName}
             helperText={formErrors.lastName}
             sx={{ mb: 2 }}
           />
-          <TextField fullWidth select label="Role" value={formData.roleId} onChange={(e) => setFormData({ ...formData, roleId: e.target.value })}>
-            <MenuItem value="SUPER_ADMIN">Super Admin</MenuItem>
-            <MenuItem value="ADMIN">Admin</MenuItem>
-            <MenuItem value="OPERATOR">Operator</MenuItem>
+          <TextField fullWidth select label="Rol" value={formData.roleId} onChange={(e) => setFormData({ ...formData, roleId: e.target.value })}>
+            <MenuItem value="SUPER_ADMIN">Super Administrador</MenuItem>
+            <MenuItem value="ADMIN">Administrador</MenuItem>
+            <MenuItem value="OPERATOR">Operador</MenuItem>
           </TextField>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setDialogOpen(false)} sx={{ color: "text.secondary" }}>Cancel</Button>
+          <Button onClick={() => setDialogOpen(false)} sx={{ color: "text.secondary" }}>Cancelar</Button>
           <Button variant="contained" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : editingUser ? "Save Changes" : "Create User"}
+            {saving ? "Guardando..." : editingUser ? "Guardar Cambios" : "Crear Usuario"}
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle sx={{ fontWeight: 600 }}>Delete User</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600 }}>Eliminar Usuario</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            Are you sure you want to delete <strong>{deletingUser?.username}</strong>? This action cannot be undone.
+            ¿Estás seguro de que deseas eliminar a <strong>{deletingUser?.username}</strong>? Esta acción no se puede deshacer.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setDeleteDialogOpen(false)} sx={{ color: "text.secondary" }}>Cancel</Button>
+          <Button onClick={() => setDeleteDialogOpen(false)} sx={{ color: "text.secondary" }}>Cancelar</Button>
           <Button variant="contained" color="error" onClick={handleDelete}>
-            Delete
+            Eliminar
           </Button>
         </DialogActions>
       </Dialog>

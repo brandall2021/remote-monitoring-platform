@@ -41,7 +41,7 @@ export default function LoginPage() {
       await login(email, password);
       navigate("/", { replace: true });
     } catch {
-      setLocalError(authError || "Login failed. Please check your credentials.");
+      setLocalError(authError || "Error al iniciar sesión. Verifica tus credenciales.");
     } finally {
       setLoading(false);
     }
@@ -106,14 +106,14 @@ export default function LoginPage() {
               mb: 2,
             }}
           >
-            Remote
+            Plataforma
             <br />
-            Monitoring
+            de Monitoreo
             <br />
-            Platform
+            Remoto
           </Typography>
           <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 380, lineHeight: 1.7 }}>
-            Enterprise-grade device monitoring and management. Monitor, control, and secure your corporate endpoints from a single dashboard.
+            Monitoreo y gestión de dispositivos de nivel empresarial. Monitorea, controla y asegura tus endpoints corporativos desde un solo panel.
           </Typography>
         </Box>
       </Box>
@@ -158,10 +158,10 @@ export default function LoginPage() {
             </Box>
 
             <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
-              Welcome back
+              Bienvenido de nuevo
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Sign in to your admin account
+              Inicia sesión con tu cuenta de administrador
             </Typography>
 
             {displayError && (
@@ -173,7 +173,7 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit}>
               <TextField
                 fullWidth
-                label="Email"
+                label="Correo electrónico"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -184,7 +184,7 @@ export default function LoginPage() {
               />
               <TextField
                 fullWidth
-                label="Password"
+                label="Contraseña"
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -198,7 +198,7 @@ export default function LoginPage() {
                         onClick={() => setShowPassword(!showPassword)}
                         edge="end"
                         size="small"
-                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                       >
                         {showPassword ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
                       </IconButton>
@@ -218,9 +218,30 @@ export default function LoginPage() {
                   fontWeight: 600,
                 }}
               >
-                {loading ? "Signing in..." : "Sign in"}
+                {loading ? "Iniciando sesión..." : "Iniciar sesión"}
               </Button>
             </form>
+
+            <Box
+              sx={{
+                mt: 3,
+                p: 2,
+                borderRadius: 2,
+                backgroundColor: "rgba(34, 197, 94, 0.06)",
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                Usuario de ejemplo
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 0.5, fontFamily: '"Geist Mono", monospace', fontSize: "0.8125rem" }}>
+                admin@monitoring.local
+              </Typography>
+              <Typography variant="body2" sx={{ fontFamily: '"Geist Mono", monospace', fontSize: "0.8125rem" }}>
+                admin123
+              </Typography>
+            </Box>
           </CardContent>
         </Card>
       </Box>

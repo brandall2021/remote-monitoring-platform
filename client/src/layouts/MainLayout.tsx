@@ -34,11 +34,11 @@ import { getAdminSocket } from "../services/websocket";
 const DRAWER_WIDTH = 240;
 
 const menuItems = [
-  { text: "Dashboard", icon: <Dashboard fontSize="small" />, path: "/" },
-  { text: "Devices", icon: <Computer fontSize="small" />, path: "/devices" },
-  { text: "Screenshots", icon: <PhotoCamera fontSize="small" />, path: "/screenshots" },
-  { text: "Users", icon: <People fontSize="small" />, path: "/users" },
-  { text: "Audit Log", icon: <Assessment fontSize="small" />, path: "/audit" },
+  { text: "Panel", icon: <Dashboard fontSize="small" />, path: "/" },
+  { text: "Dispositivos", icon: <Computer fontSize="small" />, path: "/devices" },
+  { text: "Capturas", icon: <PhotoCamera fontSize="small" />, path: "/screenshots" },
+  { text: "Usuarios", icon: <People fontSize="small" />, path: "/users" },
+  { text: "Registro de Auditoría", icon: <Assessment fontSize="small" />, path: "/audit" },
 ];
 
 function isSelected(path: string, pathname: string) {
@@ -164,7 +164,7 @@ export default function MainLayout() {
             }}
           />
           <Typography variant="caption" color="text.secondary">
-            {socketConnected ? "Connected" : "Disconnected"}
+            {socketConnected ? "Conectado" : "Desconectado"}
           </Typography>
         </Box>
       </Box>
@@ -197,7 +197,7 @@ export default function MainLayout() {
 
           <Box sx={{ flexGrow: 1 }} />
 
-          <Tooltip title={`${onlineDevices} devices online`}>
+          <Tooltip title={`${onlineDevices} dispositivos en línea`}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 2, px: 1.5, py: 0.5, borderRadius: 2, backgroundColor: "rgba(34, 197, 94, 0.06)" }}>
               <Circle sx={{ fontSize: 8, color: "success.main" }} />
               <Typography variant="caption" sx={{ fontWeight: 500, color: "success.light" }}>
@@ -262,7 +262,7 @@ export default function MainLayout() {
               }}
             >
               <Logout sx={{ mr: 1, fontSize: 18 }} />
-              <Typography variant="body2">Logout</Typography>
+              <Typography variant="body2">Cerrar sesión</Typography>
             </MenuItem>
           </Menu>
         </Toolbar>
@@ -314,7 +314,16 @@ export default function MainLayout() {
           backgroundColor: "background.default",
         }}
       >
-        <Outlet />
+        <Box sx={{ display: "flex", flexDirection: "column", minHeight: "calc(100dvh - 56px)" }}>
+          <Box sx={{ flexGrow: 1 }}>
+            <Outlet />
+          </Box>
+          <Box component="footer" sx={{ py: 2, mt: 4, borderTop: "1px solid", borderColor: "divider", textAlign: "center" }}>
+            <Typography variant="caption" color="text.secondary">
+              © copyright softgroup.com.ar
+            </Typography>
+          </Box>
+        </Box>
       </Box>
     </Box>
   );

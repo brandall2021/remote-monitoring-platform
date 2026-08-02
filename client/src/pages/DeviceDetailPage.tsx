@@ -64,7 +64,7 @@ export default function DeviceDetailPage() {
       setCommands(cmdRes.data.commands || []);
       setScreenshots(ssRes.data.screenshots || []);
     } catch {
-      setError("Device not found or failed to load.");
+      setError("No se encontró el dispositivo o no se pudo cargar.");
     } finally {
       setLoading(false);
     }
@@ -81,10 +81,10 @@ export default function DeviceDetailPage() {
       await screenshotsAPI.request(id, screenshotReason);
       setScreenshotDialog(false);
       setScreenshotReason("");
-      setSnackbar({ open: true, message: "Screenshot requested successfully", severity: "success" });
+      setSnackbar({ open: true, message: "Captura solicitada correctamente", severity: "success" });
       loadDevice();
     } catch {
-      setSnackbar({ open: true, message: "Failed to request screenshot", severity: "error" });
+      setSnackbar({ open: true, message: "Error al solicitar la captura", severity: "error" });
     } finally {
       setRequestingScreenshot(false);
     }
@@ -99,13 +99,13 @@ export default function DeviceDetailPage() {
   }
 
   if (error || !device) {
-    return <ErrorState message={error || "Device not found"} onRetry={loadDevice} />;
+    return <ErrorState message={error || "Dispositivo no encontrado"} onRetry={loadDevice} />;
   }
 
   return (
     <Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
-        <IconButton onClick={() => navigate("/devices")} size="small" aria-label="Back to devices">
+        <IconButton onClick={() => navigate("/devices")} size="small" aria-label="Volver a dispositivos">
           <ArrowBack fontSize="small" />
         </IconButton>
         <Box>
@@ -126,16 +126,16 @@ export default function DeviceDetailPage() {
           <Card>
             <CardContent sx={{ p: 3 }}>
               <Typography variant="subtitle2" sx={{ mb: 2, color: "text.secondary", textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.05em" }}>
-                Device Information
+                Información del Dispositivo
               </Typography>
               <Grid container spacing={2.5}>
                 {[
-                  { label: "IP Address", value: device.ipAddress },
-                  { label: "Platform", value: device.platform || "-" },
-                  { label: "Agent Version", value: device.agentVersion || "Unknown" },
-                  { label: "MAC Address", value: device.macAddress || "-" },
-                  { label: "Registered", value: new Date(device.registeredAt).toLocaleDateString() },
-                  { label: "Last Seen", value: device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : "Never" },
+                  { label: "Dirección IP", value: device.ipAddress },
+                  { label: "Plataforma", value: device.platform || "-" },
+                  { label: "Versión del Agente", value: device.agentVersion || "Desconocida" },
+                  { label: "Dirección MAC", value: device.macAddress || "-" },
+                  { label: "Registrado", value: new Date(device.registeredAt).toLocaleDateString() },
+                  { label: "Última Conexión", value: device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : "Nunca" },
                 ].map((item) => (
                   <Grid item xs={6} sm={4} key={item.label}>
                     <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.25 }}>
@@ -154,7 +154,7 @@ export default function DeviceDetailPage() {
           <Card>
             <CardContent sx={{ p: 3 }}>
               <Typography variant="subtitle2" sx={{ mb: 2, color: "text.secondary", textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.05em" }}>
-                Actions
+                Acciones
               </Typography>
               <Button
                 fullWidth
@@ -164,7 +164,7 @@ export default function DeviceDetailPage() {
                 disabled={device.status !== "ONLINE"}
                 sx={{ mb: 1.5 }}
               >
-                Request Screenshot
+                Solicitar Captura
               </Button>
               <Button
                 fullWidth
@@ -173,7 +173,7 @@ export default function DeviceDetailPage() {
                 onClick={loadDevice}
                 sx={{ borderColor: "divider", color: "text.secondary" }}
               >
-                Refresh
+                Actualizar
               </Button>
             </CardContent>
           </Card>
@@ -192,8 +192,8 @@ export default function DeviceDetailPage() {
               "& .MuiTab-root": { textTransform: "none", fontWeight: 500 },
             }}
           >
-            <Tab label={`Commands (${commands.length})`} />
-            <Tab label={`Screenshots (${screenshots.length})`} />
+            <Tab label={`Comandos (${commands.length})`} />
+            <Tab label={`Capturas (${screenshots.length})`} />
           </Tabs>
 
           <Box sx={{ p: 0 }}>
@@ -201,18 +201,18 @@ export default function DeviceDetailPage() {
               commands.length === 0 ? (
                 <EmptyState
                   icon={<CameraAlt />}
-                  title="No commands yet"
-                  description="Commands sent to this device will appear here."
+                  title="Aún no hay comandos"
+                  description="Los comandos enviados a este dispositivo aparecerán aquí."
                 />
               ) : (
                 <TableContainer>
                   <Table>
                     <TableHead>
                       <TableRow>
-                        <TableCell>Type</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Requested By</TableCell>
-                        <TableCell>Created</TableCell>
+                        <TableCell>Tipo</TableCell>
+                        <TableCell>Estado</TableCell>
+                        <TableCell>Solicitado Por</TableCell>
+                        <TableCell>Creado</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -266,18 +266,18 @@ export default function DeviceDetailPage() {
               screenshots.length === 0 ? (
                 <EmptyState
                   icon={<CameraAlt />}
-                  title="No screenshots yet"
-                  description="Request a screenshot from an online device to see it here."
+                  title="Aún no hay capturas"
+                  description="Solicita una captura desde un dispositivo en línea para verla aquí."
                 />
               ) : (
                 <TableContainer>
                   <Table>
                     <TableHead>
                       <TableRow>
-                        <TableCell>Preview</TableCell>
-                        <TableCell>Size</TableCell>
-                        <TableCell>Requested By</TableCell>
-                        <TableCell>Date</TableCell>
+                        <TableCell>Vista Previa</TableCell>
+                        <TableCell>Tamaño</TableCell>
+                        <TableCell>Solicitado Por</TableCell>
+                        <TableCell>Fecha</TableCell>
                         <TableCell />
                       </TableRow>
                     </TableHead>
@@ -305,14 +305,14 @@ export default function DeviceDetailPage() {
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Tooltip title="View screenshot">
+                            <Tooltip title="Ver captura">
                               <IconButton
                                 size="small"
                                 onClick={() => {
                                   const filename = ss.filePath.split("/").pop();
                                   window.open(`/uploads/screenshots/${filename}`, "_blank");
                                 }}
-                                aria-label="View screenshot"
+                                aria-label="Ver captura"
                               >
                                 <Visibility fontSize="small" />
                               </IconButton>
@@ -335,29 +335,29 @@ export default function DeviceDetailPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 600 }}>Request Screenshot</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600 }}>Solicitar Captura</DialogTitle>
         <DialogContent>
           <TextField
             fullWidth
-            label="Reason (optional)"
+            label="Motivo (opcional)"
             value={screenshotReason}
             onChange={(e) => setScreenshotReason(e.target.value)}
             multiline
             rows={3}
             sx={{ mt: 1 }}
-            placeholder="Why do you need this screenshot?"
+            placeholder="¿Por qué necesitas esta captura?"
           />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setScreenshotDialog(false)} sx={{ color: "text.secondary" }}>
-            Cancel
+            Cancelar
           </Button>
           <Button
             variant="contained"
             onClick={handleScreenshot}
             disabled={requestingScreenshot}
           >
-            {requestingScreenshot ? "Requesting..." : "Request"}
+            {requestingScreenshot ? "Solicitando..." : "Solicitar"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -35,7 +35,7 @@ export default function ScreenshotsPage() {
       setTotal(data.total);
       setPaginationModel((prev) => ({ ...prev, page: page - 1 }));
     } catch {
-      setError("Failed to load screenshots.");
+      setError("Error al cargar las capturas.");
     } finally {
       setLoading(false);
     }
@@ -53,7 +53,7 @@ export default function ScreenshotsPage() {
   const columns: GridColDef[] = [
     {
       field: "device",
-      headerName: "Device",
+      headerName: "Dispositivo",
       type: "string",
       flex: 1,
       minWidth: 150,
@@ -65,7 +65,7 @@ export default function ScreenshotsPage() {
     },
     {
       field: "requestedBy",
-      headerName: "Requested By",
+      headerName: "Solicitado Por",
       type: "string",
       width: 150,
       renderCell: (params: { value?: { username: string } }) => (
@@ -76,7 +76,7 @@ export default function ScreenshotsPage() {
     },
     {
       field: "fileSize",
-      headerName: "Size",
+      headerName: "Tamaño",
       type: "string",
       width: 100,
       renderCell: (params: { value?: number }) => (
@@ -87,7 +87,7 @@ export default function ScreenshotsPage() {
     },
     {
       field: "width",
-      headerName: "Resolution",
+      headerName: "Resolución",
       type: "string",
       width: 130,
       renderCell: (params: { value?: number; row: Screenshot }) => (
@@ -98,7 +98,7 @@ export default function ScreenshotsPage() {
     },
     {
       field: "createdAt",
-      headerName: "Date",
+      headerName: "Fecha",
       type: "string",
       width: 170,
       renderCell: (params) => (
@@ -121,7 +121,7 @@ export default function ScreenshotsPage() {
             setPreviewDialog(true);
             setImageLoading(true);
           }}
-          aria-label="View screenshot"
+          aria-label="Ver captura"
         >
           <Visibility fontSize="small" />
         </IconButton>
@@ -132,8 +132,8 @@ export default function ScreenshotsPage() {
   return (
     <Box>
       <PageHeader
-        title="Screenshots"
-        description="View captured screenshots from monitored devices"
+        title="Capturas"
+        description="Ver las capturas tomadas de los dispositivos monitoreados"
         action={
           <Button
             variant="outlined"
@@ -141,7 +141,7 @@ export default function ScreenshotsPage() {
             onClick={() => loadScreenshots()}
             sx={{ borderColor: "divider", color: "text.secondary" }}
           >
-            Refresh
+            Actualizar
           </Button>
         }
       />
@@ -151,8 +151,8 @@ export default function ScreenshotsPage() {
       {!error && screenshots.length === 0 && !loading ? (
         <EmptyState
           icon={<CameraAlt />}
-          title="No screenshots yet"
-          description="Request screenshots from device detail pages to see them here."
+          title="Aún no hay capturas"
+          description="Solicita capturas desde las páginas de detalle de los dispositivos para verlas aquí."
         />
       ) : (
         <Box sx={{ height: 600, width: "100%" }}>
@@ -188,7 +188,7 @@ export default function ScreenshotsPage() {
         fullWidth
       >
         <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 600 }}>
-          Screenshot Preview
+          Vista Previa de Captura
           <Box>
             {selectedScreenshot && (
               <IconButton
@@ -199,7 +199,7 @@ export default function ScreenshotsPage() {
                   a.download = `screenshot-${selectedScreenshot.id.slice(0, 8)}.png`;
                   a.click();
                 }}
-                aria-label="Download screenshot"
+                aria-label="Descargar captura"
                 sx={{ mr: 1 }}
               >
                 <Download />
@@ -210,7 +210,7 @@ export default function ScreenshotsPage() {
                 setPreviewDialog(false);
                 setSelectedScreenshot(null);
               }}
-              aria-label="Close preview"
+              aria-label="Cerrar vista previa"
             >
               <Close />
             </IconButton>

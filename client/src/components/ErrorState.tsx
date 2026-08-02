@@ -8,7 +8,7 @@ interface ErrorStateProps {
 }
 
 export default function ErrorState({
-  title = "Something went wrong",
+  title = "Algo salió mal",
   message,
   onRetry,
 }: ErrorStateProps) {
@@ -45,7 +45,7 @@ export default function ErrorState({
       </Typography>
       {onRetry && (
         <Button variant="outlined" onClick={onRetry} sx={{ borderColor: "divider", color: "text.secondary" }}>
-          Try again
+          Reintentar
         </Button>
       )}
     </Box>
