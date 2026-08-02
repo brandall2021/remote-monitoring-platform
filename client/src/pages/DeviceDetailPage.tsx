@@ -23,6 +23,8 @@ import {
   Tab,
   Snackbar,
   Alert,
+  Select,
+  MenuItem,
   IconButton,
   Tooltip,
 } from "@mui/material";
@@ -53,6 +55,7 @@ export default function DeviceDetailPage() {
   const [liveActive, setLiveActive] = useState(false);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [liveIntervalMs, setLiveIntervalMs] = useState(2000);
   const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadDevice = useCallback(async () => {
@@ -113,8 +116,8 @@ export default function DeviceDetailPage() {
     socket.emit("live-view-frame", { deviceId: id });
     liveTimerRef.current = setInterval(() => {
       socket.emit("live-view-frame", { deviceId: id });
-    }, 1500);
-  }, [id]);
+    }, liveIntervalMs);
+  }, [id, liveIntervalMs]);
 
   const stopLiveView = useCallback(() => {
     if (liveTimerRef.current) {
@@ -127,6 +130,22 @@ export default function DeviceDetailPage() {
     setLiveFrame(null);
     setLiveError(null);
   }, [id]);
+
+  const changeLiveInterval = useCallback(
+    (ms: number) => {
+      setLiveIntervalMs(ms);
+      if (!liveActive || !liveTimerRef.current) return;
+      const token = localStorage.getItem("accessToken");
+      if (!token || !id) return;
+      const socket = getAdminSocket(token);
+      clearInterval(liveTimerRef.current);
+      socket.emit("live-view-frame", { deviceId: id });
+      liveTimerRef.current = setInterval(() => {
+        socket.emit("live-view-frame", { deviceId: id });
+      }, ms);
+    },
+    [liveActive, id]
+  );
 
   useEffect(
     () => () => {
@@ -261,7 +280,20 @@ export default function DeviceDetailPage() {
               <Typography variant="subtitle2" sx={{ color: "text.secondary", textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.05em" }}>
                 Vista en Vivo
               </Typography>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Intervalo
+                </Typography>
+                <Select
+                  size="small"
+                  value={liveIntervalMs}
+                  onChange={(e) => changeLiveInterval(Number(e.target.value))}
+                  sx={{ minWidth: 90, fontSize: "0.8125rem" }}
+                >
+                  <MenuItem value={1000}>1 s</MenuItem>
+                  <MenuItem value={2000}>2 s</MenuItem>
+                  <MenuItem value={5000}>5 s</MenuItem>
+                </Select>
                 <CircularProgress size={14} sx={{ color: "success.main" }} />
                 <Typography variant="caption" color="text.secondary">
                   Actualizando...
