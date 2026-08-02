@@ -2,6 +2,7 @@
 FROM node:20-alpine AS server-builder
 
 WORKDIR /app
+RUN apk add --no-cache openssl
 COPY server/package*.json ./
 RUN npm ci
 COPY server/prisma ./prisma
@@ -21,7 +22,7 @@ RUN npm run build
 # ==== Runtime: servidor (API :3000) + frontend (nginx :80) ====
 FROM node:20-alpine
 
-RUN apk add --no-cache nginx
+RUN apk add --no-cache nginx openssl
 
 WORKDIR /app
 COPY --from=server-builder /app/dist ./dist
@@ -37,4 +38,4 @@ COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80 3000
 
-CMD ["sh", "-c", "nginx && npx prisma migrate deploy && npx prisma db seed && node dist/server.js"]
+CMD ["sh", "-c", "nginx && npx prisma db push && npx prisma db seed && node dist/server.js"]
