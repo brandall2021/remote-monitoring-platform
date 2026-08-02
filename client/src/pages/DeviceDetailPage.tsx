@@ -28,7 +28,7 @@ import {
   IconButton,
   Tooltip,
 } from "@mui/material";
-import { CameraAlt, Refresh, ArrowBack, Visibility, Monitor } from "@mui/icons-material";
+import { CameraAlt, Refresh, ArrowBack, Visibility, Monitor, FiberManualRecord, Stop } from "@mui/icons-material";
 import { devicesAPI, commandsAPI, screenshotsAPI, Device, Command, Screenshot } from "../services/api";
 import { getAdminSocket } from "../services/websocket";
 import StatusBadge from "../components/StatusBadge";
@@ -57,6 +57,12 @@ export default function DeviceDetailPage() {
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveIntervalMs, setLiveIntervalMs] = useState(2000);
   const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   const loadDevice = useCallback(async () => {
     if (!id) return;
@@ -91,6 +97,9 @@ export default function DeviceDetailPage() {
       if (data.deviceId !== id) return;
       setLiveFrame(`data:${data.mimeType || "image/jpeg"};base64,${data.imageBase64}`);
       setLiveError(null);
+      if (recordingRef.current) {
+        drawFrameToCanvas(data.imageBase64, data.mimeType || "image/jpeg");
+      }
     };
     const onFrameError = (data: { deviceId: string; error: string }) => {
       if (data.deviceId !== id) return;
@@ -120,6 +129,9 @@ export default function DeviceDetailPage() {
   }, [id, liveIntervalMs]);
 
   const stopLiveView = useCallback(() => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
     if (liveTimerRef.current) {
       clearInterval(liveTimerRef.current);
       liveTimerRef.current = null;
@@ -147,8 +159,87 @@ export default function DeviceDetailPage() {
     [liveActive, id]
   );
 
+  const drawFrameToCanvas = useCallback((imageBase64: string, mimeType: string) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth > 0 && canvas.width === 0) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+      }
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    };
+    img.src = `data:${mimeType};base64,${imageBase64}`;
+  }, []);
+
+  const startRecording = useCallback(() => {
+    if (!liveFrame) return;
+    const canvas = document.createElement("canvas");
+    canvasRef.current = canvas;
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.naturalWidth || 1280;
+      canvas.height = img.naturalHeight || 720;
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const stream = canvas.captureStream(2);
+      streamRef.current = stream;
+      chunksRef.current = [];
+
+      const mime = MediaRecorder.isTypeSupported("video/webm")
+        ? "video/webm"
+        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+          ? "video/webm;codecs=vp8"
+          : "";
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `vista-en-vivo-${device?.hostname || "equipo"}-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+        canvasRef.current = null;
+        recordingRef.current = false;
+        setRecording(false);
+      };
+      recorder.start(1000);
+      recordingRef.current = true;
+      setRecording(true);
+    };
+    img.src = liveFrame;
+  }, [liveFrame, device]);
+
+  const stopRecording = useCallback(() => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
+  }, []);
+
   useEffect(
     () => () => {
+      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        recorderRef.current.stop();
+      }
       if (liveTimerRef.current) clearInterval(liveTimerRef.current);
       const token = localStorage.getItem("accessToken");
       if (token && id) getAdminSocket(token).emit("stop-live-view", { deviceId: id });
@@ -281,6 +372,17 @@ export default function DeviceDetailPage() {
                 Vista en Vivo
               </Typography>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                <Button
+                  size="small"
+                  variant={recording ? "contained" : "outlined"}
+                  color={recording ? "error" : "primary"}
+                  startIcon={recording ? <Stop /> : <FiberManualRecord />}
+                  onClick={recording ? stopRecording : startRecording}
+                  disabled={!recording && !liveFrame}
+                  sx={{ textTransform: "none", mr: 1 }}
+                >
+                  {recording ? "Detener y Descargar" : "Grabar"}
+                </Button>
                 <Typography variant="caption" color="text.secondary">
                   Intervalo
                 </Typography>
