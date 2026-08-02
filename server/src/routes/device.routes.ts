@@ -6,6 +6,8 @@ import { Permission } from "../types";
 
 const router = Router();
 
+router.post("/register", (req, res) => deviceController.register(req, res));
+
 router.get(
   "/stats",
   authenticate,
