@@ -10,32 +10,34 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         DOKPLOY (PaaS)                              │
 │                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
-│  │  PostgreSQL   │  │    Redis     │  │    Server    │             │
-│  │  (5432)       │  │  (6379)      │  │  Node.js +   │             │
-│  │              │  │              │  │  Express +    │             │
-│  │              │  │              │  │  Socket.IO    │             │
-│  └──────┬───────┘  └──────┬───────┘  │  (3000)      │             │
-│         │                 │          └──────┬───────┘             │
-│         └─────────────────┴─────────────────┘                     │
-│                                   │                                │
-│                          ┌────────┴────────┐                      │
-│                          │    Client        │                      │
-│                          │  React + Nginx   │                      │
-│                          │  (80)            │                      │
-│                          └────────┬────────┘                      │
-│                                   │                                │
-└───────────────────────────────────┼────────────────────────────────┘
-                                    │ HTTPS
-                                    │
-              ┌─────────────────────┼─────────────────────┐
-              │                     │                      │
-       ┌──────┴──────┐      ┌──────┴──────┐      ┌──────┴──────┐
-       │   Agente 1  │      │   Agente 2  │      │   Agente N  │
-       │   Windows   │      │   Windows   │      │   Windows   │
-       │   (PCs)     │      │   (PCs)     │      │   (PCs)     │
-       └─────────────┘      └─────────────┘      └─────────────┘
+│  ┌────────────────┐        ┌─────────────────────────────────────┐  │
+│  │  PostgreSQL 16  │        │  App Custom "sistema-monitor"       │  │
+│  │ (servicio Dok) │        │  ┌───────────────────────────────┐  │  │
+│  │     5432       │        │  │  nginx (80) → SPA React        │  │  │
+│  └───────┬────────┘        │  │   ├─ /api ──────────────┐      │  │  │
+│          │                 │  │   ├─ /socket.io ──────┐ │      │  │  │
+│  ┌───────┴────────┐        │  │   └─ /uploads ──────┐ │ │      │  │  │
+│  │    Redis 7      │        │  │                     ▼ ▼ ▼     │  │  │
+│  │ (servicio Dok) │        │  │  Node.js + Express + Socket.IO  │  │  │
+│  │     6379       │        │  │  (3000) · Prisma migrate + seed │  │  │
+│  └───────┬────────┘        │  └───────────────────────────────┘  │  │
+│          │                 │                                      │  │
+└──────────┼─────────────────┼──────────────────────────────────────┘
+           │                 │ HTTPS
+           │                 │
+           └────────────┬────┼────────────────────┬─────────────────
+                        │    │                    │
+                 ┌──────┴────┴──┐        ┌───────┴──────┐
+                 │   Agente 1   │        │   Agente N   │
+                 │   Windows    │        │   Windows    │
+                 │   (PCs)      │        │   (PCs)      │
+                 └──────────────┘        └──────────────┘
 ```
+
+> El server y el client viven en UNA sola imagen: el Dockerfile de la raiz
+> construye ambos y el contenedor corre nginx (:80) sirviendo el frontend y
+> proxyeando `/api`, `/socket.io` y `/uploads` a la API Node.js (:3000).
+> PostgreSQL y Redis son servicios independientes de Dokploy.
 
 ---
 
@@ -53,7 +55,11 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 
 ---
 
-## Desplegar en Dokploy
+## Desplegar en Dokploy (App unica)
+
+> El proyecto se despliega como UNA sola **Custom App**: el `Dockerfile` de la
+> raiz construye server + client en la misma imagen (nginx :80 + API :3000).
+> PostgreSQL y Redis se crean como servicios de Dokploy aparte.
 
 ### Prerequisitos
 
@@ -69,11 +75,9 @@ Antes de configurar las variables de entorno, genera secrets seguros:
 ```bash
 # Generar JWT secrets (ejecutar 2 veces para obtener 2 secrets distintos)
 openssl rand -hex 32
-# Ejemplo输出: a1b2c3d4e5f6... (copiar cada resultado)
 
 # Generar token de registro de agentes
 openssl rand -hex 16
-# Ejemplo输出: f7e8d9c0b1a2... (copiar el resultado)
 ```
 
 Necesitaras 3 valores:
@@ -81,24 +85,34 @@ Necesitaras 3 valores:
 - `JWT_REFRESH_SECRET` (minimo 32 caracteres)
 - `AGENT_REGISTRATION_TOKEN` (minimo 16 caracteres)
 
-### Paso 2: Crear Proyecto en Dokploy
+### Paso 2: Crear PostgreSQL y Redis en Dokploy
 
-1. Ir a **Projects** > **Crear Proyecto**
-2. Nombrar el proyecto: `remote-monitoring`
-3. Ir a **Docker Compose** > **Crear servicio**
-4. Subir el archivo `docker-compose.dokploy.yml` del repositorio
-5. Configurar las variables de entorno (ver Paso 3)
+1. Ir a **Projects** > **Crear Proyecto** > nombrarlo `remote-monitoring`
+2. Crear servicio **PostgreSQL** (one-click):
+   - Anotar usuario, contrasena y base de datos (`remote_monitoring`)
+   - Anotar el host interno, ej: `postgres.xxx.docker.internal:5432`
+3. Crear servicio **Redis** (one-click):
+   - Anotar el host interno, ej: `redis.xxx.docker.internal:6379`
+
+### Paso 3: Crear la aplicacion Custom
+
+1. En el mismo proyecto, **New Service** > **Application**
+2. Provider: **GitHub** > seleccionar `remote-monitoring-platform` (rama `master`)
+3. Build: usa el `Dockerfile` de la raiz (se detecta automaticamente)
+4. **Puerto a publicar: `80`** (nginx / frontend)
+5. Configurar las variables de entorno (ver Paso 4)
 6. Hacer click en **Deploy**
 
-### Paso 3: Variables de Entorno
+### Paso 4: Variables de Entorno
 
-Configurar en Dokploy bajo la pestana **Environment** del servicio:
+Configurar en Dokploy bajo la pestana **Environment** de la app:
 
 ```env
-# === BASE DE DATOS ===
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=tu-contrasena-segura-aqui
-POSTGRES_DB=remote_monitoring
+# === BASE DE DATOS (servicio PostgreSQL de Dokploy) ===
+DATABASE_URL=postgresql://postgres:tu-contrasena@postgres.xxx.docker.internal:5432/remote_monitoring
+
+# === REDIS (servicio Redis de Dokploy) ===
+REDIS_URL=redis://redis.xxx.docker.internal:6379
 
 # === JWT (usar los secrets generados en Paso 1) ===
 JWT_SECRET=tu-jwt-secret-generado-aqui-min-32-chars
@@ -111,41 +125,28 @@ CORS_ORIGIN=https://monitoring.tudominio.com
 
 # === AGENTE (token para registro de agentes) ===
 AGENT_REGISTRATION_TOKEN=tu-agent-registration-token-generado
-
-# === PUERTOS (opcional) ===
-PORT=3000
-CLIENT_PORT=80
 ```
 
 > **IMPORTANTE:** Cambiar TODOS los valores por defecto. Nunca usar los valores de ejemplo en produccion.
 
-### Paso 4: Configurar Dominio (SSL)
+### Paso 5: Configurar Dominio (SSL)
 
-1. En el servicio **client** (no el server), ir a **Domains**
+1. En la app, ir a **Domains**
 2. Agregar tu dominio: `monitoring.tudominio.com`
 3. Dokploy configura SSL automaticamente con Let's Encrypt
 4. Actualizar `CORS_ORIGIN` en las variables de entorno con el dominio configurado
 
-### Paso 5: Ejecutar Seed de Datos
-
-Despues del primer deploy exitoso, ejecutar en la consola de Dokploy del servicio **server**:
-
-```bash
-npx prisma db seed
-```
-
-Esto crea:
-- 3 roles: `SUPER_ADMIN`, `ADMIN`, `OPERATOR`
-- Usuario admin por defecto:
-  - **Email:** `admin@monitoring.local`
-  - **Contrasena:** `admin123`
-
 ### Paso 6: Verificar Deploy
 
-1. Ir a **Deployments** y verificar que todos los servicios esten verdes
+1. Ir a **Deployments** y verificar que el build este verde
 2. Abrir `https://monitoring.tudominio.com`
-3. Login con las credenciales del Paso 5
+3. Login con las credenciales por defecto
 4. **Cambiar la contrasena inmediatamente** desde el panel de usuarios
+
+> Las migraciones y el seed se ejecutan automaticamente en cada arranque del
+> contenedor (CMD del Dockerfile): `prisma migrate deploy` + `prisma db seed`.
+> El seed crea 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin:
+> **Email:** `admin@monitoring.local` · **Contrasena:** `admin123`
 
 ---
 
@@ -153,17 +154,16 @@ Esto crea:
 
 | Variable | Requerida | Descripcion | Valor por defecto |
 |----------|:---------:|-------------|-------------------|
-| `POSTGRES_USER` | Si | Usuario de PostgreSQL | `postgres` |
-| `POSTGRES_PASSWORD` | Si | Contrasena de PostgreSQL | - |
-| `POSTGRES_DB` | No | Nombre de la base de datos | `remote_monitoring` |
+| `DATABASE_URL` | Si | Cadena de conexion PostgreSQL (servicio Dokploy) | - |
+| `REDIS_URL` | Si | Cadena de conexion Redis (servicio Dokploy) | `redis://localhost:6379` |
 | `JWT_SECRET` | Si | Secret para firmar JWT (min 32 chars) | - |
 | `JWT_REFRESH_SECRET` | Si | Secret para refresh tokens (min 32 chars) | - |
 | `JWT_EXPIRES_IN` | No | Tiempo de vida del access token | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | No | Tiempo de vida del refresh token | `7d` |
 | `CORS_ORIGIN` | Si | Dominio permitido para CORS | - |
 | `AGENT_REGISTRATION_TOKEN` | Si | Token para registro de agentes | - |
-| `PORT` | No | Puerto del server | `3000` |
-| `CLIENT_PORT` | No | Puerto del cliente (nginx) | `80` |
+| `PORT` | No | Puerto de la API dentro del contenedor | `3000` |
+| `SCREENSHOTS_DIR` | No | Directorio de capturas de pantalla | `./uploads/screenshots` |
 
 ---
 
@@ -349,8 +349,9 @@ remote-monitoring-platform/
 │   ├── prisma/
 │   │   ├── schema.prisma      # Modelo de base de datos
 │   │   └── seed.ts            # Datos iniciales
-│   ├── Dockerfile             # Multi-stage build para Dokploy
-│   └── package.json
+│   ├── Dockerfile             # Build del server (usado por el Dockerfile raiz)
+│   ├── package.json
+│   └── package-lock.json
 │
 ├── client/                    # Frontend React
 │   ├── src/
@@ -359,7 +360,7 @@ remote-monitoring-platform/
 │   │   ├── pages/             # Login, Dashboard, Devices, etc
 │   │   ├── services/          # API client, WebSocket
 │   │   └── types/             # Tipos TypeScript
-│   ├── Dockerfile             # Multi-stage build (Node + Nginx)
+│   ├── Dockerfile             # Build del client (usado por el Dockerfile raiz)
 │   ├── nginx.conf             # Reverse proxy al server
 │   └── package.json
 │
@@ -370,9 +371,11 @@ remote-monitoring-platform/
 │   │   └── config.ts          # Configuracion local
 │   └── package.json
 │
+├── Dockerfile                 # Dockerfile raiz (Custom App Dokploy: server+client en una imagen)
+├── nginx.conf                 # Config de nginx de la imagen unica (proxy a 127.0.0.1:3000)
 ├── .dockerignore              # Exclude files from Docker build
 ├── docker-compose.yml         # Stack completo para desarrollo local
-├── docker-compose.dokploy.yml # Stack completo para Dokploy
+├── docker-compose.dokploy.yml # Stack completo para Dokploy (opcional, en reemplazo de la app unica)
 ├── dokploy.env.example        # Variables de entorno ejemplo
 └── README.md
 ```
@@ -478,23 +481,26 @@ remote-monitoring-platform/
 ## Comandos Utiles
 
 ```bash
-# Ver logs del servidor en Dokploy
-docker logs monitoring-server
+# Nombre del contenedor de la app (se ve en Deployments > la app)
+docker ps | grep sistema-monitor
 
-# Acceder a la consola del servidor
-docker exec -it monitoring-server sh
+# Ver logs de la app
+docker logs <nombre-contenedor>
+
+# Acceder a la consola de la app
+docker exec -it <nombre-contenedor> sh
 
 # Ejecutar migraciones manualmente
-docker exec -it monitoring-server npx prisma migrate deploy
+docker exec -it <nombre-contenedor> npx prisma migrate deploy
 
 # Seed de datos
-docker exec -it monitoring-server npx prisma db seed
+docker exec -it <nombre-contenedor> npx prisma db seed
 
 # Ver estado de la base de datos
-docker exec -it monitoring-server npx prisma studio
+docker exec -it <nombre-contenedor> npx prisma studio
 
-# Reiniciar el servicio
-docker restart monitoring-server
+# Reiniciar la app
+docker restart <nombre-contenedor>
 ```
 
 ---
