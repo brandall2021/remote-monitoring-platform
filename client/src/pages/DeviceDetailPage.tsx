@@ -63,6 +63,8 @@ export default function DeviceDetailPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordingPumpRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastFrameRef = useRef<{ imageBase64: string; mimeType: string } | null>(null);
 
   const loadDevice = useCallback(async () => {
     if (!id) return;
@@ -97,6 +99,10 @@ export default function DeviceDetailPage() {
       if (data.deviceId !== id) return;
       setLiveFrame(`data:${data.mimeType || "image/jpeg"};base64,${data.imageBase64}`);
       setLiveError(null);
+      lastFrameRef.current = {
+        imageBase64: data.imageBase64,
+        mimeType: data.mimeType || "image/jpeg",
+      };
       if (recordingRef.current) {
         drawFrameToCanvas(data.imageBase64, data.mimeType || "image/jpeg");
       }
@@ -185,7 +191,7 @@ export default function DeviceDetailPage() {
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const stream = canvas.captureStream(2);
+      const stream = canvas.captureStream(4);
       streamRef.current = stream;
       chunksRef.current = [];
 
@@ -206,6 +212,10 @@ export default function DeviceDetailPage() {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = () => {
+        if (recordingPumpRef.current) {
+          clearInterval(recordingPumpRef.current);
+          recordingPumpRef.current = null;
+        }
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -225,6 +235,20 @@ export default function DeviceDetailPage() {
       recorder.start(1000);
       recordingRef.current = true;
       setRecording(true);
+
+      recordingPumpRef.current = setInterval(() => {
+        const canvas = canvasRef.current;
+        const frame = lastFrameRef.current;
+        if (!canvas || !frame) return;
+        const img = new Image();
+        img.onload = () => {
+          const ctx = canvas.getContext("2d");
+          if (ctx && canvas.width > 0) {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          }
+        };
+        img.src = `data:${frame.mimeType};base64,${frame.imageBase64}`;
+      }, 250);
     };
     img.src = liveFrame;
   }, [liveFrame, device]);
