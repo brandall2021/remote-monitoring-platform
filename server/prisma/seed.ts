@@ -26,26 +26,28 @@ async function main() {
 
   console.log("Roles created:", { superAdminRole: superAdminRole.id, adminRole: adminRole.id, operatorRole: operatorRole.id });
 
-  const existingAdmin = await prisma.user.findUnique({
-    where: { email: "admin@monitoring.local" },
-  });
+  const passwordHash = await bcrypt.hash("admin123", 12);
 
-  if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash("admin123", 12);
-    const admin = await prisma.user.create({
-      data: {
-        email: "admin@monitoring.local",
-        username: "admin",
-        passwordHash,
-        firstName: "System",
-        lastName: "Administrator",
-        roleId: superAdminRole.id,
-      },
-    });
-    console.log("Default admin user created:", admin.email);
-  } else {
-    console.log("Admin user already exists, skipping...");
-  }
+  const admin = await prisma.user.upsert({
+    where: { email: "admin@monitoring.local" },
+    update: {
+      username: "admin",
+      passwordHash,
+      firstName: "System",
+      lastName: "Administrator",
+      roleId: superAdminRole.id,
+      isActive: true,
+    },
+    create: {
+      email: "admin@monitoring.local",
+      username: "admin",
+      passwordHash,
+      firstName: "System",
+      lastName: "Administrator",
+      roleId: superAdminRole.id,
+    },
+  });
+  console.log("Default admin user ready:", admin.email);
 
   console.log("Seed completed!");
 }

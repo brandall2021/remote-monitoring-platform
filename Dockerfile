@@ -8,7 +8,7 @@ RUN npm ci
 COPY server/prisma ./prisma
 RUN npx prisma generate
 COPY server/ ./
-RUN npm run build
+RUN npm run build && npm run build:seed
 
 # ==== Build del cliente (React + Vite) ====
 FROM node:20-alpine AS client-builder
@@ -38,4 +38,4 @@ COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80 3000
 
-CMD ["sh", "-c", "nginx && npx prisma db push && npx prisma db seed && node dist/server.js"]
+CMD ["sh", "-c", "nginx && npx prisma db push && node dist/prisma/seed.js && node dist/server.js"]
