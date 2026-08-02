@@ -14,6 +14,7 @@ import {
 let socket: Socket | null = null;
 let config: AgentConfig | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
+let isCapturing = false;
 
 async function registerDevice(serverUrl: string, registrationToken: string): Promise<AgentConfig> {
   console.log("Registering device...");
@@ -84,6 +85,31 @@ function connectSocket(): void {
     console.log(`Received command: ${data.type} (${data.commandId})`);
     await handleCommand(data);
   });
+
+  socket.on("live-command", async () => {
+    await handleLiveCommand();
+  });
+}
+
+async function handleLiveCommand(): Promise<void> {
+  if (!socket || !socket.connected) return;
+  if (isCapturing) return;
+
+  isCapturing = true;
+  try {
+    const result = await takeScreenshot();
+    socket.emit("live-frame-result", {
+      imageBase64: result.imageBase64,
+      width: result.width,
+      height: result.height,
+    });
+  } catch (error: any) {
+    socket.emit("live-frame-error", {
+      error: error.message || "Screenshot failed",
+    });
+  } finally {
+    isCapturing = false;
+  }
 }
 
 async function handleCommand(data: {

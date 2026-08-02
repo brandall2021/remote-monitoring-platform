@@ -138,6 +138,17 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
       }
     });
 
+    socket.on("live-view-frame", (data: { deviceId?: string }) => {
+      if (!socket.userId || !data?.deviceId) return;
+      socket.join(`live:${data.deviceId}`);
+      agentNs.to(data.deviceId).emit("live-command");
+    });
+
+    socket.on("stop-live-view", (data: { deviceId?: string }) => {
+      if (!data?.deviceId) return;
+      socket.leave(`live:${data.deviceId}`);
+    });
+
     socket.on("disconnect", () => {
       console.log(`[ADMIN] Disconnected: ${socket.userId}`);
     });
@@ -222,6 +233,27 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
       } catch (error: any) {
         console.error(`Command result error for ${deviceId}:`, error);
       }
+    });
+
+    socket.on("live-frame-result", (data: {
+      imageBase64?: string;
+      width?: number;
+      height?: number;
+    }) => {
+      if (!data?.imageBase64) return;
+      adminNamespace.to(`live:${deviceId}`).emit("live-frame", {
+        deviceId,
+        imageBase64: data.imageBase64,
+        width: data.width,
+        height: data.height,
+      });
+    });
+
+    socket.on("live-frame-error", (data: { error?: string }) => {
+      adminNamespace.to(`live:${deviceId}`).emit("live-frame-error", {
+        deviceId,
+        error: data?.error || "Error capturando la pantalla",
+      });
     });
 
     socket.on("disconnect", async () => {

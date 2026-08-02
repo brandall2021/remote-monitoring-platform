@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Box,
@@ -26,8 +26,9 @@ import {
   IconButton,
   Tooltip,
 } from "@mui/material";
-import { CameraAlt, Refresh, ArrowBack, Visibility } from "@mui/icons-material";
+import { CameraAlt, Refresh, ArrowBack, Visibility, Monitor } from "@mui/icons-material";
 import { devicesAPI, commandsAPI, screenshotsAPI, Device, Command, Screenshot } from "../services/api";
+import { getAdminSocket } from "../services/websocket";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -49,6 +50,10 @@ export default function DeviceDetailPage() {
     message: "",
     severity: "success",
   });
+  const [liveActive, setLiveActive] = useState(false);
+  const [liveFrame, setLiveFrame] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadDevice = useCallback(async () => {
     if (!id) return;
@@ -73,6 +78,64 @@ export default function DeviceDetailPage() {
   useEffect(() => {
     loadDevice();
   }, [loadDevice]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("accessToken");
+    if (!token) return;
+    const socket = getAdminSocket(token);
+
+    const onFrame = (data: { deviceId: string; imageBase64: string }) => {
+      if (data.deviceId !== id) return;
+      setLiveFrame(`data:image/png;base64,${data.imageBase64}`);
+      setLiveError(null);
+    };
+    const onFrameError = (data: { deviceId: string; error: string }) => {
+      if (data.deviceId !== id) return;
+      setLiveError(data.error);
+    };
+
+    socket.on("live-frame", onFrame);
+    socket.on("live-frame-error", onFrameError);
+
+    return () => {
+      socket.off("live-frame", onFrame);
+      socket.off("live-frame-error", onFrameError);
+    };
+  }, [id]);
+
+  const startLiveView = useCallback(() => {
+    const token = localStorage.getItem("accessToken");
+    if (!token || !id) return;
+    const socket = getAdminSocket(token);
+    setLiveActive(true);
+    setLiveFrame(null);
+    setLiveError(null);
+    socket.emit("live-view-frame", { deviceId: id });
+    liveTimerRef.current = setInterval(() => {
+      socket.emit("live-view-frame", { deviceId: id });
+    }, 1500);
+  }, [id]);
+
+  const stopLiveView = useCallback(() => {
+    if (liveTimerRef.current) {
+      clearInterval(liveTimerRef.current);
+      liveTimerRef.current = null;
+    }
+    const token = localStorage.getItem("accessToken");
+    if (token) getAdminSocket(token).emit("stop-live-view", { deviceId: id });
+    setLiveActive(false);
+    setLiveFrame(null);
+    setLiveError(null);
+  }, [id]);
+
+  useEffect(
+    () => () => {
+      if (liveTimerRef.current) clearInterval(liveTimerRef.current);
+      const token = localStorage.getItem("accessToken");
+      if (token && id) getAdminSocket(token).emit("stop-live-view", { deviceId: id });
+    },
+    [id]
+  );
 
   const handleScreenshot = async () => {
     if (!id) return;
@@ -158,6 +221,17 @@ export default function DeviceDetailPage() {
               </Typography>
               <Button
                 fullWidth
+                variant={liveActive ? "contained" : "outlined"}
+                color={liveActive ? "error" : "primary"}
+                startIcon={<Monitor />}
+                onClick={liveActive ? stopLiveView : startLiveView}
+                disabled={device.status !== "ONLINE" && !liveActive}
+                sx={{ mb: 1.5 }}
+              >
+                {liveActive ? "Detener Vista en Vivo" : "Ver en Vivo"}
+              </Button>
+              <Button
+                fullWidth
                 variant="contained"
                 startIcon={<CameraAlt />}
                 onClick={() => setScreenshotDialog(true)}
@@ -179,6 +253,40 @@ export default function DeviceDetailPage() {
           </Card>
         </Grid>
       </Grid>
+
+      {liveActive && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent sx={{ p: 3 }}>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ color: "text.secondary", textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.05em" }}>
+                Vista en Vivo
+              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <CircularProgress size={14} sx={{ color: "success.main" }} />
+                <Typography variant="caption" color="text.secondary">
+                  Actualizando...
+                </Typography>
+              </Box>
+            </Box>
+            {liveError ? (
+              <Typography variant="body2" color="error">
+                {liveError}
+              </Typography>
+            ) : liveFrame ? (
+              <Box
+                component="img"
+                src={liveFrame}
+                alt="Vista en vivo"
+                sx={{ width: "100%", borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+              />
+            ) : (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+                <CircularProgress size={32} sx={{ color: "primary.main" }} />
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent sx={{ p: 0 }}>
