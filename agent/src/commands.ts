@@ -8,6 +8,7 @@ export interface ScreenshotResult {
   width: number;
   height: number;
   format: string;
+  [key: string]: unknown;
 }
 
 export async function takeScreenshot(): Promise<ScreenshotResult> {
