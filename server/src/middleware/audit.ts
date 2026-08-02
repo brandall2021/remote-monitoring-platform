@@ -16,7 +16,7 @@ export function auditLog(
           action,
           resource,
           resourceId: resourceId || (req.params as any).id || null,
-          details: details || { body: req.body, params: req.params },
+          details: JSON.parse(JSON.stringify(details || { body: req.body, params: req.params })),
           ipAddress: req.ip || req.socket.remoteAddress,
           userAgent: req.headers["user-agent"],
         },

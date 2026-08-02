@@ -136,7 +136,6 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      include: { role: true },
       select: {
         id: true,
         email: true,

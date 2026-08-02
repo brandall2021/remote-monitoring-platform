@@ -57,7 +57,12 @@ export class AuditService {
     ipAddress?: string;
     userAgent?: string;
   }) {
-    return prisma.auditLog.create({ data });
+    return prisma.auditLog.create({
+      data: {
+        ...data,
+        details: data.details ? JSON.parse(JSON.stringify(data.details)) : undefined,
+      },
+    });
   }
 }
 

@@ -18,7 +18,7 @@ export class CommandService {
         deviceId: data.deviceId,
         requestedById: data.requestedById,
         commandType: data.commandType,
-        payload: data.payload || {},
+        payload: JSON.parse(JSON.stringify(data.payload || {})),
         status: CommandStatus.PENDING,
       },
       include: {
@@ -66,7 +66,7 @@ export class CommandService {
         where: { id: commandId },
         data: {
           status: CommandStatus.COMPLETED,
-          result,
+          result: JSON.parse(JSON.stringify(result)),
         },
       });
     } catch (error) {

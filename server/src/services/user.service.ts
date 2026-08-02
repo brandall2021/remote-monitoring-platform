@@ -1,6 +1,5 @@
 import prisma from "../config/database";
 import { hashPassword } from "../security/password";
-import { Role } from "../types";
 
 export class UserService {
   async findAll(page: number = 1, limit: number = 20) {
@@ -9,7 +8,6 @@ export class UserService {
       prisma.user.findMany({
         skip,
         take: limit,
-        include: { role: true },
         select: {
           id: true,
           email: true,
@@ -40,7 +38,6 @@ export class UserService {
   async findById(id: string) {
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { role: true },
       select: {
         id: true,
         email: true,
@@ -63,7 +60,7 @@ export class UserService {
     password: string;
     firstName: string;
     lastName: string;
-    role: Role;
+    role: string;
   }) {
     const existingUser = await prisma.user.findFirst({
       where: {
@@ -90,7 +87,6 @@ export class UserService {
         lastName: data.lastName,
         roleId: role.id,
       },
-      include: { role: true },
       select: {
         id: true,
         email: true,
@@ -113,7 +109,7 @@ export class UserService {
       firstName?: string;
       lastName?: string;
       isActive?: boolean;
-      role?: Role;
+      role?: string;
     }
   ) {
     const updateData: Record<string, any> = { ...data };
@@ -130,7 +126,6 @@ export class UserService {
     const user = await prisma.user.update({
       where: { id },
       data: updateData,
-      include: { role: true },
       select: {
         id: true,
         email: true,
