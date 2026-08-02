@@ -72,6 +72,21 @@ export default function LoginPage() {
       }}
     >
       <Box
+        component="footer"
+        sx={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          py: 2,
+          textAlign: "center",
+        }}
+      >
+        <Typography variant="caption" color="text.secondary">
+          © copyright softgroup.com.ar
+        </Typography>
+      </Box>
+      <Box
         sx={{
           flex: 1,
           display: { xs: "none", md: "flex" },
