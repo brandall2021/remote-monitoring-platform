@@ -2,6 +2,19 @@
 
 Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor para administracion de equipos corporativos con agentes que ejecutan acciones solicitadas por administradores autenticados.
 
+Interfaz en espanol (footer `softgroup.com.ar`). Incluye capturas de pantalla bajo demanda, **vista en vivo** del escritorio por WebSocket y **grabacion en video** de la vista en vivo desde el navegador.
+
+---
+
+## Funcionalidades
+
+- **Monitoreo de equipos**: los agentes se registran y reportan estado ONLINE/OFFLINE via heartbeat cada 30s.
+- **Capturas de pantalla** bajo demanda (`POST /api/screenshots/request`).
+- **Vista en vivo**: stream de frames JPEG del escritorio del agente a la web (intervalo 1s / 2s / 5s).
+- **Grabacion de video**: boton Grabar en la vista en vivo; genera un `.webm` descargable (MediaRecorder + canvas).
+- **Comandos remotos**: screenshot, informacion del sistema, lista de procesos, bloqueo de pantalla, apagado, reinicio, logout.
+- **Auditoria completa**, roles y permisos (RBAC).
+
 ---
 
 ## Arquitectura
@@ -11,7 +24,7 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 │                         DOKPLOY (PaaS)                              │
 │                                                                     │
 │  ┌────────────────┐        ┌─────────────────────────────────────┐  │
-│  │  PostgreSQL 16  │        │  App Custom "sistema-monitor"       │  │
+│  │  PostgreSQL 16  │        │  App Custom (server + client)      │  │
 │  │ (servicio Dok) │        │  ┌───────────────────────────────┐  │  │
 │  │     5432       │        │  │  nginx (80) → SPA React        │  │  │
 │  └───────┬────────┘        │  │   ├─ /api ──────────────┐      │  │  │
@@ -19,7 +32,7 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 │  ┌───────┴────────┐        │  │   └─ /uploads ──────┐ │ │      │  │  │
 │  │    Redis 7      │        │  │                     ▼ ▼ ▼     │  │  │
 │  │ (servicio Dok) │        │  │  Node.js + Express + Socket.IO  │  │  │
-│  │     6379       │        │  │  (3000) · Prisma migrate + seed │  │  │
+│  │     6379       │        │  │  (3000) · Prisma db push + seed │  │  │
 │  └───────┬────────┘        │  └───────────────────────────────┘  │  │
 │          │                 │                                      │  │
 └──────────┼─────────────────┼──────────────────────────────────────┘
@@ -34,10 +47,11 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
                  └──────────────┘        └──────────────┘
 ```
 
-> El server y el client viven en UNA sola imagen: el Dockerfile de la raiz
+> El server y el client viven en UNA sola imagen: el `Dockerfile` de la raiz
 > construye ambos y el contenedor corre nginx (:80) sirviendo el frontend y
 > proxyeando `/api`, `/socket.io` y `/uploads` a la API Node.js (:3000).
 > PostgreSQL y Redis son servicios independientes de Dokploy.
+> En el despliegue actual la app se llama `sistema-monitot-cxsbui`.
 
 ---
 
@@ -47,11 +61,11 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 |------------|------------|--------|
 | **Server** | Node.js + Express + Prisma + Socket.IO | 3000 |
 | **Client** | React 18 + Vite + Material UI | 80 (nginx) |
-| **Agent** | Node.js + TypeScript (Windows) | - |
+| **Agent** | Node.js + TypeScript (Windows) empaquetado con pkg | - |
 | **Database** | PostgreSQL 16 | 5432 |
 | **Cache** | Redis 7 | 6379 |
 | **Auth** | JWT + Refresh Tokens | - |
-| **Realtime** | Socket.IO | - |
+| **Realtime** | Socket.IO (namespaces `/admin` y `/agent`) | - |
 
 ---
 
@@ -61,51 +75,25 @@ Plataforma empresarial de monitoreo remoto autorizado. Sistema cliente-servidor 
 > raiz construye server + client en la misma imagen (nginx :80 + API :3000).
 > PostgreSQL y Redis se crean como servicios de Dokploy aparte.
 
-### Prerequisitos
-
-- Dokploy instalado y funcionando
-- Dominio configurado (recomendado para SSL)
-- GitHub account con acceso al repositorio
-- OpenSSL instalado (para generar secrets)
-
 ### Paso 1: Generar Secrets
 
-Antes de configurar las variables de entorno, genera secrets seguros:
-
 ```bash
-# Generar JWT secrets (ejecutar 2 veces para obtener 2 secrets distintos)
-openssl rand -hex 32
-
-# Generar token de registro de agentes
-openssl rand -hex 16
+openssl rand -hex 32   # ejecutar 2 veces → JWT_SECRET y JWT_REFRESH_SECRET
+openssl rand -hex 16   # AGENT_REGISTRATION_TOKEN
 ```
-
-Necesitaras 3 valores:
-- `JWT_SECRET` (minimo 32 caracteres)
-- `JWT_REFRESH_SECRET` (minimo 32 caracteres)
-- `AGENT_REGISTRATION_TOKEN` (minimo 16 caracteres)
 
 ### Paso 2: Crear PostgreSQL y Redis en Dokploy
 
-1. Ir a **Projects** > **Crear Proyecto** > nombrarlo `remote-monitoring`
-2. Crear servicio **PostgreSQL** (one-click):
-   - Anotar usuario, contrasena y base de datos (`remote_monitoring`)
-   - Anotar el host interno, ej: `postgres.xxx.docker.internal:5432`
-3. Crear servicio **Redis** (one-click):
-   - Anotar el host interno, ej: `redis.xxx.docker.internal:6379`
+Crear servicios one-click y anotar host interno, usuario y contrasena (ej: `postgres.xxx.docker.internal:5432`).
 
 ### Paso 3: Crear la aplicacion Custom
 
-1. En el mismo proyecto, **New Service** > **Application**
-2. Provider: **GitHub** > seleccionar `remote-monitoring-platform` (rama `master`)
-3. Build: usa el `Dockerfile` de la raiz (se detecta automaticamente)
-4. **Puerto a publicar: `80`** (nginx / frontend)
-5. Configurar las variables de entorno (ver Paso 4)
-6. Hacer click en **Deploy**
+1. **New Service** > **Application** > Provider **GitHub** > `remote-monitoring-platform` (rama `master`).
+2. Build: `Dockerfile` de la raiz (deteccion automatica).
+3. **Puerto a publicar: `80`** (nginx / frontend).
+4. Configurar variables de entorno y **Deploy**.
 
 ### Paso 4: Variables de Entorno
-
-Configurar en Dokploy bajo la pestana **Environment** de la app:
 
 ```env
 # === BASE DE DATOS (servicio PostgreSQL de Dokploy) ===
@@ -114,39 +102,30 @@ DATABASE_URL=postgresql://postgres:tu-contrasena@postgres.xxx.docker.internal:54
 # === REDIS (servicio Redis de Dokploy) ===
 REDIS_URL=redis://redis.xxx.docker.internal:6379
 
-# === JWT (usar los secrets generados en Paso 1) ===
-JWT_SECRET=tu-jwt-secret-generado-aqui-min-32-chars
-JWT_REFRESH_SECRET=tu-jwt-refresh-secret-generado-aqui-min-32-chars
+# === JWT ===
+JWT_SECRET=tu-jwt-secret-min-32-chars
+JWT_REFRESH_SECRET=tu-jwt-refresh-secret-min-32-chars
 JWT_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 
-# === CORS (tu dominio de Dokploy) ===
-CORS_ORIGIN=https://monitoring.tudominio.com
+# === CORS (el dominio real de Dokploy) ===
+CORS_ORIGIN=https://monitor.recuperocrediticio.com
 
 # === AGENTE (token para registro de agentes) ===
-AGENT_REGISTRATION_TOKEN=tu-agent-registration-token-generado
+AGENT_REGISTRATION_TOKEN=tu-agent-registration-token
 ```
-
-> **IMPORTANTE:** Cambiar TODOS los valores por defecto. Nunca usar los valores de ejemplo en produccion.
 
 ### Paso 5: Configurar Dominio (SSL)
 
-1. En la app, ir a **Domains**
-2. Agregar tu dominio: `monitoring.tudominio.com`
-3. Dokploy configura SSL automaticamente con Let's Encrypt
-4. Actualizar `CORS_ORIGIN` en las variables de entorno con el dominio configurado
+En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com`). Dokploy configura SSL automaticamente con Let's Encrypt. `CORS_ORIGIN` debe coincidir con el dominio.
 
 ### Paso 6: Verificar Deploy
 
-1. Ir a **Deployments** y verificar que el build este verde
-2. Abrir `https://monitoring.tudominio.com`
-3. Login con las credenciales por defecto
-4. **Cambiar la contrasena inmediatamente** desde el panel de usuarios
+- Abrir `https://<tu-dominio>` y loguearse.
+- Credenciales por defecto: **`admin@monitoring.local` / `admin123`**.
 
-> Las migraciones y el seed se ejecutan automaticamente en cada arranque del
-> contenedor (CMD del Dockerfile): `prisma migrate deploy` + `prisma db seed`.
-> El seed crea 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin:
-> **Email:** `admin@monitoring.local` · **Contrasena:** `admin123`
+> El CMD del contenedor ejecuta en cada arranque: `nginx && npx prisma db push && node dist/prisma/seed.js && node dist/server.js`.
+> El seed es **idempotente**: crea los 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin, y **resetea la contrasena de `admin@monitoring.local` a `admin123` en cada boot** (si la cambias en el panel, se revierte en el proximo deploy).
 
 ---
 
@@ -169,165 +148,88 @@ AGENT_REGISTRATION_TOKEN=tu-agent-registration-token-generado
 
 ## Compilar el Agente para Windows
 
-El agente se instala en cada equipo corporativo que se desea monitorear. Se comunica con el servidor via WebSocket y ejecuta unicamente comandos autorizados.
-
-### Requisitos previos
-
-- **Node.js 18+** instalado en la maquina de build (no en el PC destino)
-- **Windows 10/11** o **Windows Server 2016+** en los PCs destino
-- Acceso al servidor desplegado en Dokploy
-
-### Paso 1: Preparar el entorno de build
-
-En una maquina con Node.js instalado:
+Requisitos: **Node.js 18+** en la maquina de build (no en el PC destino) y **Windows 10/11** en los PCs destino.
 
 ```bash
-git clone https://github.com/brandall2021/remote-monitoring-platform.git
 cd remote-monitoring-platform/agent
-```
-
-### Paso 2: Instalar dependencias
-
-```bash
 npm install
+npm run build          # compila a dist/agent.js
+npm run package        # empaqueta agent.exe con pkg (node18-win-x64)
 ```
 
-### Paso 3: Configurar variables de entorno
+> El repositorio ya incluye un binario pre-compilado **`agent/agent-live.exe`**
+> con soporte de vista en vivo y frames JPEG comprimidos. Si lo regeneras,
+> se actualiza con `npm run package` (cambia el output a `agent-live.exe` si
+> el `agent.exe` anterior esta corriendo y bloqueado).
 
-```bash
-cp .env.example .env
+### Configuracion del agente
+
+- Archivo de config: **`%APPDATA%\remote-monitor-agent.json`** (serverUrl, deviceId, registrationToken, heartbeatInterval).
+- Si no existe, el agente se registra usando las variables `SERVER_URL` y `REGISTRATION_TOKEN`.
+
+### Distribucion
+
+#### Opcion 1: Ejecutable + instalador (recomendado)
+
+El instalador copia el exe a `%LOCALAPPDATA%\RemoteMonitoringAgent\`, registra una **tarea programada al iniciar sesion** (corre oculto via `run-hidden.vbs`) y arranca el agente:
+
+```powershell
+# PC nueva (pide SERVER_URL y REGISTRATION_TOKEN si no hay config)
+powershell -ExecutionPolicy Bypass -File .\installer\install.ps1
+
+# PC nueva sin prompts
+powershell -ExecutionPolicy Bypass -File .\installer\install.ps1 `
+  -ServerUrl https://monitor.recuperocrediticio.com -RegistrationToken TU_TOKEN
+
+# Desinstalar (opcional: -RemoveConfig borra la config guardada)
+powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 ```
 
-Editar el archivo `.env`:
+> **Importante:** NO es un servicio de Windows real. Un servicio corre en
+> "Session 0", separado del escritorio, y **no puede capturar la pantalla del
+> usuario**. Por eso el agente se ejecuta al **iniciar sesion** del usuario,
+> donde si tiene acceso al escritorio. Para actualizar el agente, regenerar el
+> exe, copiarlo encima y volver a correr `install.ps1`.
 
-```env
-# URL completa del servidor Dokploy
-SERVER_URL=https://monitoring.tudominio.com
+#### Opcion 2: Ejecutable suelto
 
-# Token de registro (el mismo configurado en Dokploy)
-REGISTRATION_TOKEN=tu-agent-registration-token
-
-# Version del agente
-AGENT_VERSION=1.0.0
-
-# Intervalo de heartbeat en milisegundos (30 segundos)
-HEARTBEAT_INTERVAL=30000
-```
-
-### Paso 4: Compilar a JavaScript
-
-```bash
-npm run build
-```
-
-### Paso 5: Empaquetar como .exe (Recomendado)
-
-Usar `pkg` para crear un ejecutable standalone que NO requiere Node.js en el PC destino:
-
-```bash
-# Instalar pkg globalmente
-npm install -g pkg
-
-# Empaquetar para Windows x64
-npx pkg dist/agent.js --targets node18-win-x64 --output remote-monitor-agent.exe
-```
-
-**Resultado:** Archivo `remote-monitor-agent.exe` listo para distribuir.
-
-### Paso 6: Distribuir el agente
-
-#### Metodo 1: Ejecutable standalone (recomendado)
-
-1. Copiar `remote-monitor-agent.exe` al PC destino
-2. Ejecutar una vez: el agente se registra automaticamente
-3. La configuracion se guarda en `%APPDATA%\remote-monitor-agent.json`
-4. El agente inicia la conexion WebSocket al servidor
-
-#### Metodo 2: Con Node.js instalado
-
-1. Copiar la carpeta completa del agente (`dist/`, `node_modules/`, `.env`)
-2. Ejecutar: `node dist/agent.js`
-
-#### Metodo 3: Instalacion como servicio Windows
-
-Para que el agente inicie automaticamente con Windows, crear archivo `install-service.js`:
-
-```javascript
-const Service = require('node-windows').Service;
-const path = require('path');
-
-const service = new Service({
-  name: 'Remote Monitor Agent',
-  description: 'Enterprise Remote Monitoring Agent',
-  script: path.join(__dirname, 'dist', 'agent.js'),
-  env: [
-    { name: "SERVER_URL", value: "https://monitoring.tudominio.com" },
-    { name: "REGISTRATION_TOKEN", value: "tu-token" },
-    { name: "AGENT_VERSION", value: "1.0.0" }
-  ]
-});
-
-service.on('install', () => {
-  service.start();
-  console.log('Service installed and started');
-});
-
-service.install();
-```
-
-Ejecutar:
-
-```bash
-node install-service.js
-```
+1. Copiar `agent-live.exe` al PC destino.
+2. Ejecutar una vez: se registra y guarda la config en `%APPDATA%\remote-monitor-agent.json`.
+3. El agente conecta por WebSocket y queda monitoreado.
 
 ### Flujo de registro del agente
 
 ```
 1. Agente inicia
-   │
-2. Lee configuracion (.env o config file)
-   │
-3. Si no tiene DEVICE_ID:
-   │  POST /api/devices/register
-   │  { hostname, OS, IP, registrationToken }
-   │  ← Recibe { deviceId, registrationToken }
-   │  ← Guarda config localmente
-   │
-4. Conecta WebSocket a /agent
-   │  auth: { deviceId, token }
-   │
+2. Lee config (%APPDATA%\remote-monitor-agent.json o env SERVER_URL/REGISTRATION_TOKEN)
+3. Si no tiene config:
+     POST /api/devices/register
+     { hostname, OS, IP, platform, agentVersion, registrationToken }
+     ← recibe { id (deviceId), registrationToken } y guarda config
+4. Conecta WebSocket a /agent con auth: { deviceId, token }
 5. Envia heartbeat cada 30s
-   │
-6. Recibe comandos autorizados:
-   │  - SCREENSHOT → captura pantalla → envia imagen
-   │  - SYSTEM_INFO → info del sistema → envia datos
-   │  - PROCESS_LIST → lista procesos → envia lista
-   │  - LOCK_SCREEN → bloquea pantalla
-   │  - SHUTDOWN / RESTART / LOGOUT
-   │
+6. Recibe comandos autorizados (ver tabla)
 7. Si se desconecta, reintenta cada 5s
 ```
 
 ### Comandos soportados por el agente
 
-| Comando | Descripcion | Requiere autorizacion |
-|---------|-------------|:---------------------:|
-| `SCREENSHOT` | Captura de pantalla | Si |
-| `SYSTEM_INFO` | Informacion del sistema (CPU, RAM, disco) | Si |
-| `PROCESS_LIST` | Lista de procesos activos | Si |
-| `LOCK_SCREEN` | Bloquea la pantalla del equipo | Si |
-| `SHUTDOWN` | Apaga el equipo | Si |
-| `RESTART` | Reinicia el equipo | Si |
-| `LOGOUT` | Cierra sesion del usuario | Si |
+| Comando | Descripcion |
+|---------|-------------|
+| `SCREENSHOT` | Captura de pantalla completa (PNG) y la guarda en el server |
+| `SYSTEM_INFO` | Informacion del sistema (CPU, RAM, disco) |
+| `PROCESS_LIST` | Lista de procesos activos |
+| `LOCK_SCREEN` | Bloquea la pantalla del equipo |
+| `SHUTDOWN` | Apaga el equipo |
+| `RESTART` | Reinicia el equipo |
+| `LOGOUT` | Cierra sesion del usuario |
 
-### Verificar que el agente funciona
+### Vista en vivo (streaming)
 
-1. Iniciar el agente en el PC destino
-2. Ir al panel web en Dokploy
-3. Ir a **Devices** → el equipo deberia aparecer como **ONLINE**
-4. Hacer click en el equipo → ver detalles
-5. Probar: **Request Screenshot** → la imagen se captura y muestra
+- La web pide frames por WebSocket (`live-view-frame`), el server retransmite al agente (`live-command`) y el agente responde con un JPEG (`live-frame-result`).
+- Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing).
+- Los frames **no se guardan en la base de datos** ni como archivos; solo viven en memoria del navegador.
+- Desde la web se puede **grabar** la vista en vivo y descargar un `.webm` (~4 fps, redibuja el ultimo frame cada 250ms para cubrir toda la duracion).
 
 ---
 
@@ -344,39 +246,38 @@ remote-monitoring-platform/
 │   │   ├── security/          # JWT, passwords, permisos
 │   │   ├── services/          # Logica de negocio
 │   │   ├── types/             # Tipos TypeScript
-│   │   ├── websocket/         # Socket.IO server
+│   │   ├── websocket/         # Socket.IO server (/admin y /agent)
 │   │   └── server.ts          # Entry point
 │   ├── prisma/
 │   │   ├── schema.prisma      # Modelo de base de datos
-│   │   └── seed.ts            # Datos iniciales
-│   ├── Dockerfile             # Build del server (usado por el Dockerfile raiz)
-│   ├── package.json
-│   └── package-lock.json
+│   │   └── seed.ts            # Datos iniciales (compilado a dist/prisma/seed.js)
+│   └── package.json
 │
-├── client/                    # Frontend React
+├── client/                    # Frontend React (UI en espanol)
 │   ├── src/
 │   │   ├── hooks/             # useAuth
-│   │   ├── layouts/           # MainLayout con sidebar
-│   │   ├── pages/             # Login, Dashboard, Devices, etc
-│   │   ├── services/          # API client, WebSocket
+│   │   ├── layouts/           # MainLayout con sidebar y footer softgroup.com.ar
+│   │   ├── pages/             # Login, Dashboard, Devices, DeviceDetail, Screenshots, Users, Audit
+│   │   ├── services/          # API client, WebSocket (admin)
 │   │   └── types/             # Tipos TypeScript
-│   ├── Dockerfile             # Build del client (usado por el Dockerfile raiz)
-│   ├── nginx.conf             # Reverse proxy al server
 │   └── package.json
 │
 ├── agent/                     # Agente Windows
 │   ├── src/
-│   │   ├── agent.ts           # Entry point
-│   │   ├── commands.ts        # Ejecucion de comandos
-│   │   └── config.ts          # Configuracion local
+│   │   ├── agent.ts           # Entry point (comandos + vista en vivo)
+│   │   ├── commands.ts        # Ejecucion de comandos y captura de frames
+│   │   ├── config.ts          # Configuracion local
+│   │   └── screenshot-desktop.d.ts
+│   ├── installer/             # Instalador (tarea al iniciar sesion)
+│   │   ├── install.ps1
+│   │   ├── uninstall.ps1
+│   │   └── run-hidden.vbs
+│   ├── agent-live.exe         # Binario pre-compilado (vista en vivo + JPEG)
 │   └── package.json
 │
 ├── Dockerfile                 # Dockerfile raiz (Custom App Dokploy: server+client en una imagen)
 ├── nginx.conf                 # Config de nginx de la imagen unica (proxy a 127.0.0.1:3000)
-├── .dockerignore              # Exclude files from Docker build
-├── docker-compose.yml         # Stack completo para desarrollo local
-├── docker-compose.dokploy.yml # Stack completo para Dokploy (opcional, en reemplazo de la app unica)
-├── dokploy.env.example        # Variables de entorno ejemplo
+├── .gitignore
 └── README.md
 ```
 
@@ -411,12 +312,14 @@ remote-monitoring-platform/
 | `GET` | `/api/devices/:id` | `DEVICES_READ` | Detalle de equipo |
 | `GET` | `/api/devices/stats` | `DEVICES_READ` | Estadisticas |
 | `DELETE` | `/api/devices/:id` | `DEVICES_DELETE` | Eliminar equipo |
+| `POST` | `/api/devices/register` | Token de registro | Alta de agente |
 
 ### Comandos
 
 | Metodo | Endpoint | Permiso | Descripcion |
 |--------|----------|---------|-------------|
 | `GET` | `/api/commands` | `COMMANDS_READ` | Listar comandos |
+| `GET` | `/api/commands/device/:deviceId` | `COMMANDS_READ` | Comandos de un equipo |
 | `POST` | `/api/commands` | `COMMANDS_WRITE` | Crear comando |
 | `POST` | `/api/commands/:id/approve` | `COMMANDS_EXECUTE` | Aprobar comando |
 | `POST` | `/api/commands/:id/reject` | `COMMANDS_EXECUTE` | Rechazar comando |
@@ -426,19 +329,16 @@ remote-monitoring-platform/
 | Metodo | Endpoint | Permiso | Descripcion |
 |--------|----------|---------|-------------|
 | `GET` | `/api/screenshots` | `SCREENSHOTS_VIEW` | Listar capturas |
-| `POST` | `/api/screenshots/request` | `SCREENSHOTS_REQUEST` | Solicitar captura |
+| `GET` | `/api/screenshots/device/:deviceId` | `SCREENSHOTS_VIEW` | Capturas de un equipo |
 | `GET` | `/api/screenshots/:id` | `SCREENSHOTS_VIEW` | Ver captura |
+| `POST` | `/api/screenshots/request` | `SCREENSHOTS_REQUEST` | Solicitar captura |
+| `DELETE` | `/api/screenshots/:id` | `SCREENSHOTS_VIEW` | Eliminar captura |
 
-### Auditoria
-
-| Metodo | Endpoint | Permiso | Descripcion |
-|--------|----------|---------|-------------|
-| `GET` | `/api/audit` | `AUDIT_READ` | Logs de auditoria |
-
-### Health Check
+### Auditoria y Health
 
 | Metodo | Endpoint | Descripcion |
 |--------|----------|-------------|
+| `GET` | `/api/audit` | Logs de auditoria |
 | `GET` | `/api/health` | Estado del servidor |
 
 ---
@@ -464,44 +364,16 @@ remote-monitoring-platform/
 
 ## Seguridad
 
-- **JWT + Refresh Tokens** para autenticacion stateless
-- **RBAC** (Role-Based Access Control) con 3 niveles
-- **Rate limiting** en endpoints sensibles (10 req/15min en login, 100 req/15min general)
-- **Helmet** para headers de seguridad HTTP
-- **CORS** configurado por dominio
-- **Auditoria completa** de todas las acciones
-- **Firma de comandos** para evitar replay attacks
-- **Token unico** por agente para registro
-- **Heartbeat** periodicos para detectar desconexiones
-- **HTTPS obligatorio** via Dokploy/Let's Encrypt
-- **Cifrado** en transmision de capturas de pantalla
-
----
-
-## Comandos Utiles
-
-```bash
-# Nombre del contenedor de la app (se ve en Deployments > la app)
-docker ps | grep sistema-monitor
-
-# Ver logs de la app
-docker logs <nombre-contenedor>
-
-# Acceder a la consola de la app
-docker exec -it <nombre-contenedor> sh
-
-# Ejecutar migraciones manualmente
-docker exec -it <nombre-contenedor> npx prisma migrate deploy
-
-# Seed de datos
-docker exec -it <nombre-contenedor> npx prisma db seed
-
-# Ver estado de la base de datos
-docker exec -it <nombre-contenedor> npx prisma studio
-
-# Reiniciar la app
-docker restart <nombre-contenedor>
-```
+- **JWT + Refresh Tokens** para autenticacion stateless.
+- **RBAC** con 3 niveles (SUPER_ADMIN, ADMIN, OPERATOR).
+- **Rate limiting** en endpoints sensibles (login, general).
+- **Helmet** para headers de seguridad HTTP.
+- **CORS** configurado por dominio (`CORS_ORIGIN`).
+- **Auditoria completa** de acciones de usuarios.
+- **Token unico de registro** por agente (`AGENT_REGISTRATION_TOKEN`).
+- **Heartbeat** periodicos para detectar desconexiones y marcar OFFLINE.
+- **HTTPS** obligatorio via Dokploy/Let's Encrypt.
+- Los frames de la vista en vivo viajan por WebSocket (WSS) y no se persisten en el server.
 
 ---
 
@@ -509,49 +381,32 @@ docker restart <nombre-contenedor>
 
 | Problema | Solucion |
 |----------|----------|
-| Agent no conecta | Verificar `SERVER_URL` y `REGISTRATION_TOKEN` |
-| Agent aparece OFFLINE | Verificar firewall, puerto 3000/443 abierto |
-| Screenshot falla | Agente necesita permisos de pantalla en Windows |
+| Agent no conecta | Verificar `SERVER_URL` y `REGISTRATION_TOKEN`, y que la config en `%APPDATA%` sea correcta |
+| Agent aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
+| Screenshot falla | Agente debe correr en la sesion interactiva del usuario (no como servicio) |
+| Vista en vivo no muestra frames | El agente debe ser el build con soporte `live-command` (`agent-live.exe`) |
+| Video grabado corto | Solo aplicaba a builds previos al fix del "pump" de redibujado (commit `0e3b93d`) |
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |
-| CORS error | Verificar `CORS_ORIGIN` coincide con el dominio |
+| CORS error | Verificar `CORS_ORIGIN` coincide con el dominio real |
 | DB connection fail | Verificar `DATABASE_URL` y que PostgreSQL este corriendo |
-| Seed no ejecuta | Verificar que las migraciones esten aplicadas primero |
-| Client no carga | Verificar que el server este corriendo y accesible |
+| La contrasena admin se revierte | Es el comportamiento del seed: la resetea a `admin123` en cada deploy |
 
 ---
 
 ## Desarrollo Local
 
-Para ejecutar el proyecto en local:
-
 ```bash
-# Clonar repositorio
 git clone https://github.com/brandall2021/remote-monitoring-platform.git
 cd remote-monitoring-platform
 
-# Copiar variables de entorno
-cp dokploy.env.example .env
-
-# Levantar servicios (PostgreSQL + Redis)
+# Servicios (PostgreSQL + Redis)
 docker-compose up -d postgres redis
 
-# Instalar dependencias del server
-cd server && npm install
+# Server
+cd server && npm install && npx prisma migrate dev && npm run dev
 
-# Ejecutar migraciones
-npx prisma migrate dev
-
-# Seed de datos
-npx prisma db seed
-
-# Iniciar server en desarrollo
-npm run dev
-
-# En otra terminal, instalar dependencias del client
-cd ../client && npm install
-
-# Iniciar client en desarrollo
-npm run dev
+# Client (en otra terminal)
+cd ../client && npm install && npm run dev
 ```
 
 El client estara disponible en `http://localhost:5173` y el server en `http://localhost:3000`.
