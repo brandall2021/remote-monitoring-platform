@@ -14,8 +14,24 @@ Get-Process -Name "agent" -ErrorAction SilentlyContinue |
   Where-Object { $_.Path -eq $exePath } |
   Stop-Process -Force
 
+$deadline = (Get-Date).AddSeconds(10)
+while (
+  (Get-Process -Name "agent" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exePath }) -and
+  (Get-Date) -lt $deadline
+) {
+  Start-Sleep -Milliseconds 200
+}
+
+$deadline = (Get-Date).AddSeconds(10)
+while ((Test-Path -LiteralPath $InstallDir) -and (Get-Date) -lt $deadline) {
+  Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $InstallDir) {
+    Start-Sleep -Milliseconds 200
+  }
+}
+
 if (Test-Path -LiteralPath $InstallDir) {
-  Remove-Item -LiteralPath $InstallDir -Recurse -Force
+  Write-Warning "No se pudo borrar $InstallDir (probablemente en uso)."
 }
 
 if ($RemoveConfig) {

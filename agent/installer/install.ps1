@@ -31,6 +31,14 @@ Get-Process -Name "agent" -ErrorAction SilentlyContinue |
   Where-Object { $_.Path -eq $exePath } |
   Stop-Process -Force
 
+$deadline = (Get-Date).AddSeconds(10)
+while (
+  (Get-Process -Name "agent" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exePath }) -and
+  (Get-Date) -lt $deadline
+) {
+  Start-Sleep -Milliseconds 200
+}
+
 Copy-Item -LiteralPath $AgentPath -Destination $exePath -Force
 
 @"
