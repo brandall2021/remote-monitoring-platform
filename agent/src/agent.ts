@@ -43,7 +43,7 @@ async function registerDevice(serverUrl: string, registrationToken: string): Pro
   const agentConfig: AgentConfig = {
     serverUrl,
     deviceId: data.id,
-    registrationToken,
+    registrationToken: data.registrationToken,
     agentVersion: process.env.AGENT_VERSION || "1.0.0",
     heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || "30000"),
   };

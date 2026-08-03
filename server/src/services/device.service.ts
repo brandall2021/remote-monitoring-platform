@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import prisma from "../config/database";
 import { DeviceStatus } from "../types";
 
@@ -67,6 +68,12 @@ export class DeviceService {
     agentVersion: string;
     registrationToken: string;
   }) {
+    // Token unico por dispositivo: se genera en el server y se devuelve al
+    // agente para la autenticacion por WebSocket. El registrationToken que
+    // llega es el token compartido de onboarding (AGENT_REGISTRATION_TOKEN),
+    // validado en el controller. Esto permite registrar N equipos con el mismo
+    // token de onboarding sin violar la restriccion unica de la tabla.
+    const deviceToken = crypto.randomBytes(24).toString("base64url");
     const device = await prisma.device.create({
       data: {
         hostname: data.hostname,
@@ -76,7 +83,7 @@ export class DeviceService {
         macAddress: data.macAddress,
         platform: data.platform,
         agentVersion: data.agentVersion,
-        registrationToken: data.registrationToken,
+        registrationToken: deviceToken,
         status: DeviceStatus.ONLINE,
         lastSeenAt: new Date(),
       },

@@ -11,27 +11,42 @@ export interface AgentConfig {
   heartbeatInterval: number;
 }
 
-const CONFIG_FILE = path.join(
+const USER_CONFIG_FILE = path.join(
   process.env.APPDATA || process.env.HOME || ".",
   "remote-monitor-agent.json"
 );
 
+const MACHINE_CONFIG_FILE = path.join(
+  process.env.ProgramData || "C:\\ProgramData",
+  "RemoteMonitoringAgent",
+  "agent.json"
+);
+
+let activeConfigFile: string | null = null;
+
 export function loadConfig(): AgentConfig | null {
-  try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const data = fs.readFileSync(CONFIG_FILE, "utf-8");
-      return JSON.parse(data);
+  const candidates = [MACHINE_CONFIG_FILE, USER_CONFIG_FILE];
+  for (const file of candidates) {
+    try {
+      if (fs.existsSync(file)) {
+        const data = fs.readFileSync(file, "utf-8").replace(/^\uFEFF/, "");
+        activeConfigFile = file;
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error(`Failed to load config (${file}):`, error);
     }
-  } catch (error) {
-    console.error("Failed to load config:", error);
   }
   return null;
 }
 
 export function saveConfig(config: AgentConfig): void {
+  const file = activeConfigFile || MACHINE_CONFIG_FILE;
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-    console.log(`Config saved to ${CONFIG_FILE}`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(config, null, 2));
+    activeConfigFile = file;
+    console.log(`Config saved to ${file}`);
   } catch (error) {
     console.error("Failed to save config:", error);
   }

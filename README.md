@@ -164,8 +164,10 @@ npm run package        # empaqueta agent.exe con pkg (node18-win-x64)
 
 ### Configuracion del agente
 
-- Archivo de config: **`%APPDATA%\remote-monitor-agent.json`** (serverUrl, deviceId, registrationToken, heartbeatInterval).
-- Si no existe, el agente se registra usando las variables `SERVER_URL` y `REGISTRATION_TOKEN`.
+- Config a nivel maquina (despliegue corporativo): **`%ProgramData%\RemoteMonitoringAgent\agent.json`** (serverUrl, deviceId, registrationToken, heartbeatInterval). Un solo `deviceId` por PC, compartido por todos los usuarios.
+- Fallback a nivel usuario (instalacion manual): **`%APPDATA%\remote-monitor-agent.json`**.
+- Si no existe ninguna config, el agente se registra usando las variables `SERVER_URL` y `REGISTRATION_TOKEN`.
+- `registrationToken` guardado es un **token unico por dispositivo** emitido por el server al registrarse (el token compartido de onboarding solo se usa para el alta).
 
 ### Distribucion
 
@@ -191,6 +193,39 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 > donde si tiene acceso al escritorio. Para actualizar el agente, regenerar el
 > exe, copiarlo encima y volver a correr `install.ps1`.
 
+#### Opcion 1b: Despliegue masivo (30+ PCs, PDQ / Intune / SCCM)
+
+Para muchos equipos se usa **`agent/installer/install-silent.ps1`**, disenado para
+correr en contexto **SYSTEM** (Session 0, sin interaccion). Hace todo en un paso:
+
+1. Copia `agent-live.exe` a `C:\Program Files\RemoteMonitoringAgent\agent.exe`.
+2. **Pre-registra el equipo** contra el server (genera su `deviceId` unico) y
+   escribe la config a nivel maquina en `%ProgramData%\RemoteMonitoringAgent\agent.json`.
+3. Registra la tarea programada **`RemoteMonitoringAgent` al logon de CUALQUIER
+   usuario** (sesion interactiva, via `run-hidden.vbs`) — asi cada usuario que
+   inicie sesion levanta el agente con el mismo `deviceId` de la PC.
+4. Otorga a `Users` escritura sobre la carpeta de config (para re-registrar si
+   la config se pierde).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\install-silent.ps1 `
+  -ServerUrl https://monitor.recuperocrediticio.com `
+  -RegistrationToken TU_TOKEN
+
+# Desinstalar (remueve tarea, binario y config)
+powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
+```
+
+> El `AGENT_REGISTRATION_TOKEN` queda **embebido** en el paquete de despliegue
+> (aceptado para este caso de uso). El server lo valida solo en el alta y luego
+> emite un token unico por dispositivo.
+
+**Empaquetado por herramienta:**
+
+- **PDQ Deploy:** package = `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...`, corriendo como SYSTEM/dominio. Para update, usar un nuevo package o re-ejecutar el mismo.
+- **Intune (Win32 app):** empaquetar `install-silent.ps1` + `agent-live.exe` (+ `run-hidden.vbs` se genera solo) con *Microsoft Win32 Content Prep Tool*. Comando de instalacion: `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...` (corre como SYSTEM). Regla de deteccion: archivo `C:\Program Files\RemoteMonitoringAgent\agent.exe` existe. Uninstall: `powershell.exe -ExecutionPolicy Bypass -File "uninstall-silent.ps1"`.
+- **SCCM:** Deployment Type PowerShell (Instalar/Desinstalar apuntando a ambos scripts).
+
 #### Opcion 2: Ejecutable suelto
 
 1. Copiar `agent-live.exe` al PC destino.
@@ -201,12 +236,12 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 
 ```
 1. Agente inicia
-2. Lee config (%APPDATA%\remote-monitor-agent.json o env SERVER_URL/REGISTRATION_TOKEN)
+2. Lee config (maquina: %ProgramData%\RemoteMonitoringAgent\agent.json; o usuario: %APPDATA%\remote-monitor-agent.json; o env SERVER_URL/REGISTRATION_TOKEN)
 3. Si no tiene config:
      POST /api/devices/register
-     { hostname, OS, IP, platform, agentVersion, registrationToken }
-     ← recibe { id (deviceId), registrationToken } y guarda config
-4. Conecta WebSocket a /agent con auth: { deviceId, token }
+     { hostname, OS, IP, platform, agentVersion, registrationToken (token compartido) }
+     ← recibe { id (deviceId), registrationToken (token unico por dispositivo) } y guarda config
+4. Conecta WebSocket a /agent con auth: { deviceId, token-unico }
 5. Envia heartbeat cada 30s
 6. Recibe comandos autorizados (ver tabla)
 7. Si se desconecta, reintenta cada 5s
@@ -268,9 +303,11 @@ remote-monitoring-platform/
 │   │   ├── commands.ts        # Ejecucion de comandos y captura de frames
 │   │   ├── config.ts          # Configuracion local
 │   │   └── screenshot-desktop.d.ts
-│   ├── installer/             # Instalador (tarea al iniciar sesion)
-│   │   ├── install.ps1
+│   ├── installer/             # Instaladores (tarea al iniciar sesion)
+│   │   ├── install.ps1            # Interactivo (PC individual)
 │   │   ├── uninstall.ps1
+│   │   ├── install-silent.ps1     # Silencioso para PDQ/Intune/SCCM (contexto SYSTEM)
+│   │   ├── uninstall-silent.ps1
 │   │   └── run-hidden.vbs
 │   ├── agent-live.exe         # Binario pre-compilado (vista en vivo + JPEG)
 │   └── package.json

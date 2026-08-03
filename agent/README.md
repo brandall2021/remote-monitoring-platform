@@ -33,17 +33,19 @@ npm run package  # empaqueta agent.exe con pkg (node18-win-x64)
 
 ## Configuracion
 
-- **Archivo de config:** `%APPDATA%\remote-monitor-agent.json` con:
+- **Config a nivel maquina (despliegue corporativo):** `%ProgramData%\RemoteMonitoringAgent\agent.json` con:
   ```json
   {
     "serverUrl": "https://monitor.recuperocrediticio.com",
     "deviceId": "<uuid>",
-    "registrationToken": "<token>",
+    "registrationToken": "<token-unico-por-dispositivo>",
     "agentVersion": "1.0.0",
     "heartbeatInterval": 30000
   }
   ```
-- Si el archivo no existe, el agente se registra con las variables de entorno `SERVER_URL` y `REGISTRATION_TOKEN` (o el instalador las pide por prompt) y luego guarda la config.
+- **Fallback a nivel usuario (instalacion manual):** `%APPDATA%\remote-monitor-agent.json` (misma estructura).
+- Si no existe ninguna config, el agente se registra con las variables de entorno `SERVER_URL` y `REGISTRATION_TOKEN` (o el instalador las pide por prompt) y luego guarda la config.
+- El `registrationToken` guardado es un **token unico por dispositivo** emitido por el server al registrarse. El token compartido de onboarding (`AGENT_REGISTRATION_TOKEN`) solo se usa en el alta.
 
 ---
 
@@ -95,18 +97,58 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 2. Ejecutarlo una vez: se registra y guarda la config en `%APPDATA%\remote-monitor-agent.json`.
 3. El agente conecta por WebSocket y queda monitoreado.
 
+### Opcion 3: Despliegue masivo (PDQ / Intune / SCCM, 30+ PCs)
+
+`installer/install-silent.ps1` corre en contexto **SYSTEM** y automatiza todo:
+
+1. Copia el exe a `C:\Program Files\RemoteMonitoringAgent\agent.exe`.
+2. **Pre-registra el equipo** contra el server y escribe la config a nivel maquina (`%ProgramData%\RemoteMonitoringAgent\agent.json`).
+3. Registra la tarea `RemoteMonitoringAgent` **al logon de cualquier usuario** (sesion interactiva).
+4. Otorga a `Users` escritura sobre la carpeta de config.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\install-silent.ps1 `
+  -ServerUrl https://monitor.recuperocrediticio.com `
+  -RegistrationToken TU_TOKEN
+
+# Desinstalar
+powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
+```
+
+**Parámetros de `install-silent.ps1`:**
+
+| Parametro | Descripcion | Default |
+|-----------|-------------|---------|
+| `-ServerUrl` | URL del server | - (o env `RM_SERVER_URL`) |
+| `-RegistrationToken` | Token compartido de onboarding | - (o env `RM_REGISTRATION_TOKEN`) |
+| `-AgentPath` | Ruta del exe del agente | `..\agent-live.exe` (o `..\agent.exe`) |
+| `-TaskName` | Nombre de la tarea | `RemoteMonitoringAgent` |
+| `-InstallDir` | Carpeta de instalacion | `%ProgramFiles%\RemoteMonitoringAgent` |
+| `-ConfigDir` | Carpeta de config de maquina | `%ProgramData%\RemoteMonitoringAgent` |
+| `-SkipTaskRegistration` | No registrar la tarea (solo copiar/registrar) | off |
+
+**Empaquetado:**
+
+- **PDQ Deploy:** ejecutar el comando de arriba como SYSTEM.
+- **Intune (Win32 app):** empaquetar `install-silent.ps1` + `agent-live.exe` con *Microsoft Win32 Content Prep Tool*. Instalar: `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...` (SYSTEM). Deteccion: existe `C:\Program Files\RemoteMonitoringAgent\agent.exe`. Uninstall: `uninstall-silent.ps1`.
+- **SCCM:** Deployment Type PowerShell (Instalar/Desinstalar).
+
+> El token compartido queda embebido en el paquete. El server solo lo valida en
+> el alta y luego emite un token unico por dispositivo, por lo que todas las
+> PCs pueden usar el mismo token de onboarding.
+
 ---
 
 ## Flujo de registro
 
 ```
 1. Agente inicia
-2. Lee config (%APPDATA%\remote-monitor-agent.json o env SERVER_URL/REGISTRATION_TOKEN)
+2. Lee config (maquina: %ProgramData%\RemoteMonitoringAgent\agent.json; o usuario: %APPDATA%\remote-monitor-agent.json; o env SERVER_URL/REGISTRATION_TOKEN)
 3. Si no tiene config:
      POST /api/devices/register
-     { hostname, OS, IP, platform, agentVersion, registrationToken }
-     ← recibe { id (deviceId), registrationToken } y guarda config
-4. Conecta WebSocket a /agent con auth: { deviceId, token }
+     { hostname, OS, IP, platform, agentVersion, registrationToken (token compartido) }
+     ← recibe { id (deviceId), registrationToken (token unico por dispositivo) } y guarda config
+4. Conecta WebSocket a /agent con auth: { deviceId, token-unico }
 5. Envia heartbeat cada 30s
 6. Recibe comandos autorizados (ver tabla)
 7. Si se desconecta, reintenta cada 5s
@@ -146,8 +188,10 @@ agent/
 │   ├── config.ts              # Configuracion local
 │   └── screenshot-desktop.d.ts
 ├── installer/
-│   ├── install.ps1            # Instalador (tarea al iniciar sesion)
-│   ├── uninstall.ps1          # Desinstalador
+│   ├── install.ps1            # Instalador interactivo (PC individual)
+│   ├── uninstall.ps1          # Desinstalador interactivo
+│   ├── install-silent.ps1     # Silencioso para PDQ/Intune/SCCM (contexto SYSTEM)
+│   ├── uninstall-silent.ps1   # Desinstalador silencioso
 │   └── run-hidden.vbs         # Lanzador oculto
 ├── agent-live.exe             # Binario pre-compilado (vista en vivo + JPEG)
 └── package.json
@@ -164,3 +208,5 @@ agent/
 | Screenshot falla | El agente debe correr en la sesion interactiva del usuario (no como servicio) |
 | Vista en vivo no muestra frames | Usar el build con soporte `live-command` (`agent-live.exe`) |
 | `install.ps1` falla con EPERM | El exe esta en uso; el instalador ya espera hasta 10s a que el proceso lo libere |
+| Segundo equipo no se registra (400 unique) | El server debe estar con el build que emite un token unico por dispositivo (redeploy) |
+| `Failed to load config: Unexpected token` | El JSON fue escrito con BOM (PowerShell 5.1 `-Encoding UTF8`); se tolera desde el build actual. Regenerar la config con `WriteAllText` sin BOM si usas un instalador viejo |
