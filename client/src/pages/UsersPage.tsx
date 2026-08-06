@@ -44,7 +44,7 @@ export default function UsersPage() {
     password: "",
     firstName: "",
     lastName: "",
-    roleId: "",
+    role: "",
   });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -98,7 +98,7 @@ export default function UsersPage() {
           password: formData.password,
           firstName: formData.firstName,
           lastName: formData.lastName,
-          roleId: formData.roleId || "OPERATOR",
+          role: formData.role || "OPERATOR",
         });
         setSnackbar({ open: true, message: "Usuario creado correctamente", severity: "success" });
       }
@@ -134,7 +134,7 @@ export default function UsersPage() {
       password: "",
       firstName: user.firstName,
       lastName: user.lastName,
-      roleId: user.role?.id || "",
+      role: user.role?.id || "",
     });
     setFormErrors({});
     setDialogOpen(true);
@@ -142,7 +142,7 @@ export default function UsersPage() {
 
   const resetForm = () => {
     setEditingUser(null);
-    setFormData({ email: "", username: "", password: "", firstName: "", lastName: "", roleId: "" });
+    setFormData({ email: "", username: "", password: "", firstName: "", lastName: "", role: "" });
     setFormErrors({});
   };
 
@@ -354,7 +354,7 @@ export default function UsersPage() {
             helperText={formErrors.lastName}
             sx={{ mb: 2 }}
           />
-          <TextField fullWidth select label="Rol" value={formData.roleId} onChange={(e) => setFormData({ ...formData, roleId: e.target.value })}>
+          <TextField fullWidth select label="Rol" value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })}>
             <MenuItem value="SUPER_ADMIN">Super Administrador</MenuItem>
             <MenuItem value="ADMIN">Administrador</MenuItem>
             <MenuItem value="OPERATOR">Operador</MenuItem>

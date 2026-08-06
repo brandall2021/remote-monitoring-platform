@@ -47,6 +47,8 @@ export default function DeviceDetailPage() {
   const [screenshotDialog, setScreenshotDialog] = useState(false);
   const [screenshotReason, setScreenshotReason] = useState("");
   const [requestingScreenshot, setRequestingScreenshot] = useState(false);
+  const [role, setRole] = useState<"ASESOR" | "SUPERVISOR">("ASESOR");
+  const [savingRole, setSavingRole] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false,
     message: "",
@@ -73,6 +75,7 @@ export default function DeviceDetailPage() {
     try {
       const { data } = await devicesAPI.get(id);
       setDevice(data);
+      setRole(data.role || "ASESOR");
       const [cmdRes, ssRes] = await Promise.all([
         commandsAPI.listByDevice(id),
         screenshotsAPI.listByDevice(id),
@@ -287,6 +290,21 @@ export default function DeviceDetailPage() {
     }
   };
 
+  const handleRoleChange = async () => {
+    if (!id) return;
+    setSavingRole(true);
+    try {
+      const { data } = await devicesAPI.update(id, { role });
+      setRole(data.role || role);
+      setDevice((prev) => (prev ? { ...prev, role: data.role || role } : prev));
+      setSnackbar({ open: true, message: "Rol del dispositivo actualizado", severity: "success" });
+    } catch {
+      setSnackbar({ open: true, message: "Error al actualizar el rol", severity: "error" });
+    } finally {
+      setSavingRole(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
@@ -344,6 +362,43 @@ export default function DeviceDetailPage() {
                   </Grid>
                 ))}
               </Grid>
+              <Box
+                sx={{
+                  mt: 3,
+                  pt: 2.5,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: 2,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Box sx={{ minWidth: 220 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                    Rol del equipo
+                  </Typography>
+                  <Select
+                    size="small"
+                    fullWidth
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as "ASESOR" | "SUPERVISOR")}
+                    sx={{ fontSize: "0.875rem" }}
+                  >
+                    <MenuItem value="ASESOR">Asesor</MenuItem>
+                    <MenuItem value="SUPERVISOR">Supervisor</MenuItem>
+                  </Select>
+                </Box>
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={handleRoleChange}
+                  disabled={savingRole || role === device.role}
+                  sx={{ textTransform: "none" }}
+                >
+                  {savingRole ? "Guardando..." : "Guardar Rol"}
+                </Button>
+              </Box>
             </CardContent>
           </Card>
         </Grid>

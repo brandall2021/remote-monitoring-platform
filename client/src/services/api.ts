@@ -107,6 +107,7 @@ export interface Device {
   ipAddress: string;
   macAddress?: string;
   platform?: string;
+  role?: "ASESOR" | "SUPERVISOR";
   status: "ONLINE" | "OFFLINE";
   lastSeenAt?: string;
   registeredAt: string;
@@ -172,9 +173,9 @@ export const usersAPI = {
   list: (page = 1, limit = 20) =>
     api.get<{ users: User[]; total: number }>(`/users?page=${page}&limit=${limit}`),
   get: (id: string) => api.get<User>(`/users/${id}`),
-  create: (data: { email: string; username: string; password: string; firstName: string; lastName: string; roleId: string }) =>
+  create: (data: { email: string; username: string; password: string; firstName: string; lastName: string; role: string }) =>
     api.post<User>("/users", data),
-  update: (id: string, data: Partial<{ firstName: string; lastName: string; email: string; isActive: boolean; roleId: string }>) =>
+  update: (id: string, data: Partial<{ firstName: string; lastName: string; email: string; isActive: boolean; role: string }>) =>
     api.put<User>(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   changePassword: (id: string, password: string) =>
@@ -186,6 +187,8 @@ export const devicesAPI = {
     api.get<{ devices: Device[]; total: number }>(`/devices?page=${page}&limit=${limit}${status ? `&status=${status}` : ""}`),
   get: (id: string) => api.get<Device>(`/devices/${id}`),
   stats: () => api.get<DeviceStats>("/devices/stats"),
+  update: (id: string, data: Partial<{ role: "ASESOR" | "SUPERVISOR" }>) =>
+    api.put<Device>(`/devices/${id}`, data),
   delete: (id: string) => api.delete(`/devices/${id}`),
 };
 

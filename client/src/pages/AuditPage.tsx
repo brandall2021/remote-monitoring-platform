@@ -47,6 +47,12 @@ export default function AuditPage() {
     loadLogs();
   }, []);
 
+  const actionMeta = (action: string) => {
+    if (action === "DEVICE_ON") return { label: "Equipo encendido", color: "#16a34a", bg: "rgba(34, 197, 94, 0.1)" };
+    if (action === "DEVICE_OFF") return { label: "Equipo apagado", color: "#dc2626", bg: "rgba(239, 68, 68, 0.1)" };
+    return { label: action, color: "secondary.main", bg: "rgba(59, 130, 246, 0.1)" };
+  };
+
   const columns: GridColDef[] = [
     {
       field: "createdAt",
@@ -61,7 +67,7 @@ export default function AuditPage() {
     },
     {
       field: "user",
-      headerName: "User",
+      headerName: "Usuario",
       type: "string",
       width: 150,
       renderCell: (params) => (
@@ -74,22 +80,25 @@ export default function AuditPage() {
       field: "action",
       headerName: "Acción",
       type: "string",
-      width: 130,
-      renderCell: (params) => (
-        <Typography
-          variant="caption"
-          sx={{
-            px: 1,
-            py: 0.5,
-            borderRadius: 1,
-            fontWeight: 500,
-            backgroundColor: "rgba(59, 130, 246, 0.1)",
-            color: "secondary.main",
-          }}
-        >
-          {params.value}
-        </Typography>
-      ),
+      width: 160,
+      renderCell: (params) => {
+        const meta = actionMeta(params.value as string);
+        return (
+          <Typography
+            variant="caption"
+            sx={{
+              px: 1,
+              py: 0.5,
+              borderRadius: 1,
+              fontWeight: 500,
+              backgroundColor: meta.bg,
+              color: meta.color,
+            }}
+          >
+            {meta.label}
+          </Typography>
+        );
+      },
     },
     {
       field: "resource",
@@ -110,6 +119,22 @@ export default function AuditPage() {
           {params.value ? params.value.slice(0, 8) + "..." : "-"}
         </Typography>
       ),
+    },
+    {
+      field: "details",
+      headerName: "Detalles",
+      type: "string",
+      width: 220,
+      renderCell: (params: { value?: { hostname?: string; reason?: string } }) => {
+        const details = params.value;
+        return (
+          <Typography variant="body2" color="text.secondary" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {details?.hostname
+              ? `${details.hostname}${details.reason ? ` · ${details.reason}` : ""}`
+              : "-"}
+          </Typography>
+        );
+      },
     },
     {
       field: "ipAddress",

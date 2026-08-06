@@ -25,6 +25,11 @@ export enum DeviceStatus {
   OFFLINE = "OFFLINE",
 }
 
+export enum DeviceRole {
+  ASESOR = "ASESOR",
+  SUPERVISOR = "SUPERVISOR",
+}
+
 export enum CommandStatus {
   PENDING = "PENDING",
   APPROVED = "APPROVED",

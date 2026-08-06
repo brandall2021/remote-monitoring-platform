@@ -19,6 +19,7 @@ export interface Device {
   ipAddress: string;
   macAddress?: string;
   platform: string;
+  role: "ASESOR" | "SUPERVISOR";
   status: "ONLINE" | "OFFLINE";
   lastSeenAt?: string;
   registeredAt: string;

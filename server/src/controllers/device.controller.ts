@@ -1,8 +1,13 @@
 import { Response } from "express";
 import { deviceService } from "../services/device.service";
 import { AuthRequest } from "../middleware/auth";
-import { DeviceStatus } from "../types";
+import { DeviceRole, DeviceStatus } from "../types";
 import { config } from "../config";
+import { z } from "zod";
+
+const updateDeviceSchema = z.object({
+  role: z.enum([DeviceRole.ASESOR, DeviceRole.SUPERVISOR]),
+});
 
 export class DeviceController {
   async findAll(req: AuthRequest, res: Response): Promise<void> {
@@ -56,6 +61,20 @@ export class DeviceController {
       res.json({ message: "Device deleted successfully" });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  }
+
+  async update(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const body = updateDeviceSchema.parse(req.body);
+      const device = await deviceService.updateRole(req.params.id, body.role);
+      res.json(device);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        res.status(400).json({ error: "Validation error", details: error.errors });
+        return;
+      }
+      res.status(400).json({ error: error.message });
     }
   }
 }

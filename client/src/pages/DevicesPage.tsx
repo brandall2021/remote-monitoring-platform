@@ -106,6 +106,33 @@ export default function DevicesPage() {
       ),
     },
     {
+      field: "role",
+      headerName: "Rol",
+      type: "string",
+      width: 120,
+      renderCell: (params: { value?: string }) => (
+        <Typography
+          variant="caption"
+          sx={{
+            px: 1,
+            py: 0.5,
+            borderRadius: 1,
+            fontWeight: 500,
+            backgroundColor:
+              params.value === "SUPERVISOR"
+                ? "rgba(59, 130, 246, 0.1)"
+                : "rgba(139, 92, 246, 0.1)",
+            color:
+              params.value === "SUPERVISOR"
+                ? "secondary.main"
+                : "#8b5cf6",
+          }}
+        >
+          {params.value === "SUPERVISOR" ? "Supervisor" : "Asesor"}
+        </Typography>
+      ),
+    },
+    {
       field: "lastSeenAt",
       headerName: "Última Conexión",
       type: "string",

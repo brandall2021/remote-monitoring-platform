@@ -102,6 +102,7 @@ model Device {
   ipAddress       String
   macAddress      String?
   platform        String
+  role            String   @default("ASESOR")
   status          DeviceStatus @default(OFFLINE)
   lastSeenAt      DateTime?
   registeredAt    DateTime     @default(now())

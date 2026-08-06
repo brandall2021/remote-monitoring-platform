@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import prisma from "../config/database";
-import { DeviceStatus } from "../types";
+import { DeviceRole, DeviceStatus } from "../types";
 
 export class DeviceService {
   async findAll(
@@ -97,7 +97,55 @@ export class DeviceService {
       },
     });
 
+    await this.logPowerEvent(device.id, "POWER_ON");
+
     return device;
+  }
+
+  async updateRole(id: string, role: DeviceRole) {
+    return prisma.device.update({
+      where: { id },
+      data: { role },
+    });
+  }
+
+  async logPowerEvent(
+    deviceId: string,
+    eventType: "POWER_ON" | "POWER_OFF",
+    reason?: string
+  ) {
+    const device = await prisma.device.findUnique({
+      where: { id: deviceId },
+    });
+    if (!device) return;
+
+    const turnedOn = eventType === "POWER_ON";
+    const message = turnedOn
+      ? `Equipo encendido: ${device.hostname}`
+      : `Equipo apagado: ${device.hostname}${reason ? ` (${reason})` : ""}`;
+
+    await Promise.all([
+      prisma.auditLog.create({
+        data: {
+          action: eventType,
+          resource: "device",
+          resourceId: device.id,
+          details: {
+            hostname: device.hostname,
+            ipAddress: device.ipAddress,
+            reason,
+          },
+        },
+      }),
+      prisma.deviceEvent.create({
+        data: {
+          deviceId: device.id,
+          eventType,
+          message,
+          data: { reason },
+        },
+      }),
+    ]);
   }
 
   async heartbeat(deviceId: string, agentVersion: string) {
@@ -122,6 +170,18 @@ export class DeviceService {
 
   async markOfflineDevices() {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const stale = await prisma.device.findMany({
+      where: {
+        status: DeviceStatus.ONLINE,
+        lastSeenAt: { lt: fiveMinutesAgo },
+      },
+      select: { id: true },
+    });
+
+    for (const device of stale) {
+      await this.logPowerEvent(device.id, "POWER_OFF", "heartbeat timeout");
+    }
+
     await prisma.device.updateMany({
       where: {
         status: DeviceStatus.ONLINE,

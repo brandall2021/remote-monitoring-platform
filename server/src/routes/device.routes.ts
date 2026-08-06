@@ -27,6 +27,12 @@ router.get(
   requirePermission(Permission.DEVICES_READ),
   (req, res) => deviceController.findById(req, res)
 );
+router.put(
+  "/:id",
+  authenticate,
+  requirePermission(Permission.DEVICES_WRITE),
+  (req, res) => deviceController.update(req, res)
+);
 router.delete(
   "/:id",
   authenticate,

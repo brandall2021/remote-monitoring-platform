@@ -160,6 +160,15 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
 
     socket.join(deviceId);
 
+    const device = await prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { status: true },
+    });
+
+    if (device && device.status !== "ONLINE") {
+      await deviceService.logPowerEvent(deviceId, "POWER_ON");
+    }
+
     await deviceService.heartbeat(deviceId, socket.handshake.auth.agentVersion || "unknown");
 
     adminNamespace.emit("device-status", {
@@ -260,6 +269,15 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
 
     socket.on("disconnect", async () => {
       console.log(`[AGENT] Disconnected: ${deviceId}`);
+      const current = await prisma.device.findUnique({
+        where: { id: deviceId },
+        select: { status: true },
+      });
+
+      if (current && current.status === "ONLINE") {
+        await deviceService.logPowerEvent(deviceId, "POWER_OFF", "connection closed");
+      }
+
       await deviceService.setOffline(deviceId);
       adminNamespace.emit("device-status", {
         deviceId,
