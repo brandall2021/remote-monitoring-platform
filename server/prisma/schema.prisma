@@ -96,6 +96,7 @@ model RefreshToken {
 model Device {
   id              String       @id @default(uuid())
   hostname        String
+  alias           String?
   agentVersion    String?
   operatingSystem String
   osVersion       String?

@@ -49,6 +49,8 @@ export default function DeviceDetailPage() {
   const [requestingScreenshot, setRequestingScreenshot] = useState(false);
   const [role, setRole] = useState<"ASESOR" | "SUPERVISOR">("ASESOR");
   const [savingRole, setSavingRole] = useState(false);
+  const [alias, setAlias] = useState("");
+  const [savingAlias, setSavingAlias] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false,
     message: "",
@@ -76,6 +78,7 @@ export default function DeviceDetailPage() {
       const { data } = await devicesAPI.get(id);
       setDevice(data);
       setRole(data.role || "ASESOR");
+      setAlias(data.alias || "");
       const [cmdRes, ssRes] = await Promise.all([
         commandsAPI.listByDevice(id),
         screenshotsAPI.listByDevice(id),
@@ -305,6 +308,22 @@ export default function DeviceDetailPage() {
     }
   };
 
+  const handleAliasChange = async () => {
+    if (!id) return;
+    setSavingAlias(true);
+    try {
+      const value = alias.trim();
+      const { data } = await devicesAPI.update(id, { alias: value || null });
+      setAlias(data.alias || "");
+      setDevice((prev) => (prev ? { ...prev, alias: data.alias || null } : prev));
+      setSnackbar({ open: true, message: "Alias del dispositivo actualizado", severity: "success" });
+    } catch {
+      setSnackbar({ open: true, message: "Error al actualizar el alias", severity: "error" });
+    } finally {
+      setSavingAlias(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
@@ -325,10 +344,13 @@ export default function DeviceDetailPage() {
         </IconButton>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600, letterSpacing: "-0.02em" }}>
-            {device.hostname}
+            {device.alias || device.hostname}
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 2, mt: 0.5 }}>
             <StatusBadge status={device.status.toLowerCase() as "online" | "offline"} size="medium" />
+            <Typography variant="body2" color="text.secondary">
+              {device.hostname}
+            </Typography>
             <Typography variant="body2" color="text.secondary">
               {device.operatingSystem} {device.osVersion || ""}
             </Typography>
@@ -374,6 +396,31 @@ export default function DeviceDetailPage() {
                   flexWrap: "wrap",
                 }}
               >
+                <Box sx={{ minWidth: 220, flexGrow: 1 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                    Alias del equipo
+                  </Typography>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    placeholder="Nombre descriptivo (ej: Recepción Piso 2)"
+                    value={alias}
+                    onChange={(e) => setAlias(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAliasChange();
+                    }}
+                    sx={{ fontSize: "0.875rem" }}
+                  />
+                </Box>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleAliasChange}
+                  disabled={savingAlias}
+                  sx={{ textTransform: "none" }}
+                >
+                  {savingAlias ? "Guardando..." : "Guardar Alias"}
+                </Button>
                 <Box sx={{ minWidth: 220 }}>
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
                     Rol del equipo

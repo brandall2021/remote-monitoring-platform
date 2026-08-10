@@ -13,6 +13,7 @@ export interface User {
 export interface Device {
   id: string;
   hostname: string;
+  alias?: string | null;
   agentVersion?: string;
   operatingSystem: string;
   osVersion?: string;

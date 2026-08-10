@@ -16,7 +16,7 @@ import {
   Alert,
 } from "@mui/material";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
-import { Refresh, Visibility, Search, Computer, Delete } from "@mui/icons-material";
+import { Refresh, Visibility, Search, Computer, Delete, Edit } from "@mui/icons-material";
 import { devicesAPI, Device } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import ErrorState from "../components/ErrorState";
@@ -34,6 +34,10 @@ export default function DevicesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingDevice, setDeletingDevice] = useState<Device | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [aliasDialogOpen, setAliasDialogOpen] = useState(false);
+  const [aliasDevice, setAliasDevice] = useState<Device | null>(null);
+  const [aliasValue, setAliasValue] = useState("");
+  const [savingAlias, setSavingAlias] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
     open: false,
     message: "",
@@ -70,6 +74,28 @@ export default function DevicesPage() {
     }
   };
 
+  const openAliasDialog = (device: Device) => {
+    setAliasDevice(device);
+    setAliasValue(device.alias || "");
+    setAliasDialogOpen(true);
+  };
+
+  const handleAliasSave = async () => {
+    if (!aliasDevice) return;
+    setSavingAlias(true);
+    try {
+      const alias = aliasValue.trim();
+      const { data } = await devicesAPI.update(aliasDevice.id, { alias: alias || null });
+      setDevices((prev) => prev.map((d) => (d.id === data.id ? data : d)));
+      setSnackbar({ open: true, message: "Alias actualizado correctamente", severity: "success" });
+      setAliasDialogOpen(false);
+    } catch {
+      setSnackbar({ open: true, message: "Error al actualizar el alias", severity: "error" });
+    } finally {
+      setSavingAlias(false);
+    }
+  };
+
   useEffect(() => {
     loadDevices();
   }, [loadDevices]);
@@ -88,8 +114,15 @@ export default function DevicesPage() {
       type: "string",
       flex: 1,
       minWidth: 150,
-      renderCell: (params) => (
-        <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{params.value}</Typography>
+      renderCell: (params: { row: Device }) => (
+        <Box sx={{ display: "flex", flexDirection: "column", py: 0.5 }}>
+          <Typography sx={{ fontWeight: 600, fontSize: "0.875rem" }}>{params.row.hostname}</Typography>
+          {params.row.alias && (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.75rem" }}>
+              {params.row.alias}
+            </Typography>
+          )}
+        </Box>
       ),
     },
     {
@@ -176,7 +209,7 @@ export default function DevicesPage() {
       field: "actions",
       headerName: "",
       type: "string",
-      width: 96,
+      width: 132,
       sortable: false,
       renderCell: (params: { row: Device }) => (
         <>
@@ -187,6 +220,15 @@ export default function DevicesPage() {
               aria-label={`View details for ${params.row.hostname}`}
             >
               <Visibility fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Editar alias">
+            <IconButton
+              size="small"
+              onClick={() => openAliasDialog(params.row)}
+              aria-label={`Edit alias for ${params.row.hostname}`}
+            >
+              <Edit fontSize="small" />
             </IconButton>
           </Tooltip>
           <Tooltip title="Eliminar dispositivo">
@@ -279,6 +321,34 @@ export default function DevicesPage() {
           </Box>
         </>
       )}
+
+      <Dialog open={aliasDialogOpen} onClose={() => setAliasDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 600 }}>Editar Alias</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Dispositivo: <strong>{aliasDevice?.hostname}</strong>
+          </Typography>
+          <TextField
+            fullWidth
+            autoFocus
+            label="Alias"
+            placeholder="Nombre descriptivo (ej: Recepción Piso 2)"
+            value={aliasValue}
+            onChange={(e) => setAliasValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAliasSave();
+            }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setAliasDialogOpen(false)} sx={{ color: "text.secondary" }}>
+            Cancelar
+          </Button>
+          <Button variant="contained" onClick={handleAliasSave} disabled={savingAlias}>
+            {savingAlias ? "Guardando..." : "Guardar"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle sx={{ fontWeight: 600 }}>Eliminar Dispositivo</DialogTitle>

@@ -102,6 +102,7 @@ export interface LoginResponse {
 export interface Device {
   id: string;
   hostname: string;
+  alias?: string | null;
   operatingSystem: string;
   osVersion?: string;
   ipAddress: string;
@@ -187,7 +188,7 @@ export const devicesAPI = {
     api.get<{ devices: Device[]; total: number }>(`/devices?page=${page}&limit=${limit}${status ? `&status=${status}` : ""}`),
   get: (id: string) => api.get<Device>(`/devices/${id}`),
   stats: () => api.get<DeviceStats>("/devices/stats"),
-  update: (id: string, data: Partial<{ role: "ASESOR" | "SUPERVISOR" }>) =>
+  update: (id: string, data: Partial<{ role: "ASESOR" | "SUPERVISOR"; alias: string | null }>) =>
     api.put<Device>(`/devices/${id}`, data),
   delete: (id: string) => api.delete(`/devices/${id}`),
 };

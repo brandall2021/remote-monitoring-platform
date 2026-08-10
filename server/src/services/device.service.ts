@@ -102,10 +102,10 @@ export class DeviceService {
     return device;
   }
 
-  async updateRole(id: string, role: DeviceRole) {
+  async update(id: string, data: { role?: DeviceRole; alias?: string | null }) {
     return prisma.device.update({
       where: { id },
-      data: { role },
+      data,
     });
   }
 

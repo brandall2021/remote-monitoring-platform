@@ -6,7 +6,8 @@ import { config } from "../config";
 import { z } from "zod";
 
 const updateDeviceSchema = z.object({
-  role: z.enum([DeviceRole.ASESOR, DeviceRole.SUPERVISOR]),
+  role: z.enum([DeviceRole.ASESOR, DeviceRole.SUPERVISOR]).optional(),
+  alias: z.string().trim().max(120).nullable().optional(),
 });
 
 export class DeviceController {
@@ -67,7 +68,7 @@ export class DeviceController {
   async update(req: AuthRequest, res: Response): Promise<void> {
     try {
       const body = updateDeviceSchema.parse(req.body);
-      const device = await deviceService.updateRole(req.params.id, body.role);
+      const device = await deviceService.update(req.params.id, body);
       res.json(device);
     } catch (error: any) {
       if (error.name === "ZodError") {
