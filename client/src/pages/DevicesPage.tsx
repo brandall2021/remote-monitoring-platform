@@ -8,9 +8,15 @@ import {
   Tooltip,
   TextField,
   InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
-import { Refresh, Visibility, Search, Computer } from "@mui/icons-material";
+import { Refresh, Visibility, Search, Computer, Delete } from "@mui/icons-material";
 import { devicesAPI, Device } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import ErrorState from "../components/ErrorState";
@@ -25,6 +31,14 @@ export default function DevicesPage() {
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 20 });
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingDevice, setDeletingDevice] = useState<Device | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: "success" | "error" }>({
+    open: false,
+    message: "",
+    severity: "success",
+  });
 
   const loadDevices = useCallback(async (page = 1) => {
     setLoading(true);
@@ -40,6 +54,21 @@ export default function DevicesPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleDelete = async () => {
+    if (!deletingDevice) return;
+    setDeleting(true);
+    try {
+      await devicesAPI.delete(deletingDevice.id);
+      setSnackbar({ open: true, message: "Dispositivo eliminado correctamente", severity: "success" });
+      setDeleteDialogOpen(false);
+      loadDevices(paginationModel.page + 1);
+    } catch {
+      setSnackbar({ open: true, message: "Error al eliminar el dispositivo", severity: "error" });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     loadDevices();
@@ -147,18 +176,33 @@ export default function DevicesPage() {
       field: "actions",
       headerName: "",
       type: "string",
-      width: 56,
+      width: 96,
       sortable: false,
       renderCell: (params: { row: Device }) => (
-        <Tooltip title="Ver detalles">
-          <IconButton
-            size="small"
-            onClick={() => navigate(`/devices/${params.row.id}`)}
-            aria-label={`View details for ${params.row.hostname}`}
-          >
-            <Visibility fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <>
+          <Tooltip title="Ver detalles">
+            <IconButton
+              size="small"
+              onClick={() => navigate(`/devices/${params.row.id}`)}
+              aria-label={`View details for ${params.row.hostname}`}
+            >
+              <Visibility fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Eliminar dispositivo">
+            <IconButton
+              size="small"
+              color="error"
+              onClick={() => {
+                setDeletingDevice(params.row);
+                setDeleteDialogOpen(true);
+              }}
+              aria-label={`Delete ${params.row.hostname}`}
+            >
+              <Delete fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </>
       ),
     },
   ];
@@ -235,6 +279,40 @@ export default function DevicesPage() {
           </Box>
         </>
       )}
+
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle sx={{ fontWeight: 600 }}>Eliminar Dispositivo</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            ¿Estás seguro de que deseas eliminar el dispositivo{" "}
+            <strong>{deletingDevice?.hostname}</strong> ({deletingDevice?.ipAddress})? Esta acción no se puede
+            deshacer.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setDeleteDialogOpen(false)} sx={{ color: "text.secondary" }}>
+            Cancelar
+          </Button>
+          <Button variant="contained" color="error" onClick={handleDelete} disabled={deleting}>
+            {deleting ? "Eliminando..." : "Eliminar"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          variant="filled"
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
