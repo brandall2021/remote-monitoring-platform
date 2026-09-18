@@ -76,7 +76,7 @@ begin
     ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
-function InitializeSetup(): Boolean;
+procedure InitializeWizard;
 begin
   ConfigPage := CreateInputQueryPage(wpSelectDir,
     'Configuracion del agente', 'Conectar este equipo al servidor',
@@ -85,7 +85,6 @@ begin
   ConfigPage.Add('Token de registro:', True);
   ConfigPage.Values[0] := 'https://monitor.recuperocrediticio.com';
   ConfigPage.Values[1] := '';
-  Result := True;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
