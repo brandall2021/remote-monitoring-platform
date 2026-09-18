@@ -20,10 +20,12 @@ let isCapturing = false;
 async function registerDevice(serverUrl: string, registrationToken: string): Promise<AgentConfig> {
   console.log("Registering device...");
 
+  const normalizedServerUrl = serverUrl.replace(/\/+$/, "");
+
   const sysInfo = getSystemInfo();
   const deviceId = generateDeviceId();
 
-  const { data } = await axios.post(`${serverUrl}/api/devices/register`, {
+  const { data } = await axios.post(`${normalizedServerUrl}/api/devices/register`, {
     hostname: sysInfo.hostname,
     operatingSystem: sysInfo.operatingSystem,
     osVersion: sysInfo.osVersion,
@@ -40,12 +42,16 @@ async function registerDevice(serverUrl: string, registrationToken: string): Pro
     registrationToken,
   });
 
+  if (!data?.id || !data?.registrationToken) {
+    throw new Error("The server returned an invalid device registration response");
+  }
+
   const agentConfig: AgentConfig = {
-    serverUrl,
+    serverUrl: normalizedServerUrl,
     deviceId: data.id,
     registrationToken: data.registrationToken,
     agentVersion: process.env.AGENT_VERSION || "1.0.0",
-    heartbeatInterval: parseInt(process.env.HEARTBEAT_INTERVAL || "30000"),
+    heartbeatInterval: parseHeartbeat(process.env.HEARTBEAT_INTERVAL),
   };
 
   saveConfig(agentConfig);
@@ -65,6 +71,8 @@ function connectSocket(): void {
     transports: ["websocket"],
     reconnection: true,
     reconnectionDelay: 5000,
+    reconnectionDelayMax: 30000,
+    timeout: 20000,
     reconnectionAttempts: Infinity,
   });
 
@@ -112,6 +120,11 @@ async function handleLiveCommand(): Promise<void> {
   } finally {
     isCapturing = false;
   }
+}
+
+function parseHeartbeat(value: string | undefined): number {
+  const parsed = Number(value || 30000);
+  return Number.isFinite(parsed) ? Math.min(Math.max(Math.round(parsed), 5000), 300000) : 30000;
 }
 
 async function handleCommand(data: {
@@ -202,21 +215,26 @@ async function main(): Promise<void> {
 
   config = loadConfig();
 
-  if (!config) {
-    const serverUrl = process.env.SERVER_URL;
-    const registrationToken = process.env.REGISTRATION_TOKEN;
+  const serverUrl = config?.serverUrl || process.env.SERVER_URL;
+  const registrationToken = config?.registrationToken || process.env.REGISTRATION_TOKEN;
 
-    if (!serverUrl || !registrationToken) {
-      console.error("Please set SERVER_URL and REGISTRATION_TOKEN environment variables");
-      console.error("Or place a valid config file in the app data directory");
-      process.exit(1);
-    }
+  if (!serverUrl || !registrationToken) {
+    console.error("Please set SERVER_URL and REGISTRATION_TOKEN or install a valid agent config");
+    process.exit(1);
+  }
 
-    try {
-      config = await registerDevice(serverUrl, registrationToken);
-    } catch (error: any) {
-      console.error("Registration failed:", error.message);
-      process.exit(1);
+  // The installer can leave a bootstrap config without a deviceId. Register
+  // again after a transient network outage instead of exiting at logon.
+  if (!config?.deviceId) {
+    let delay = 5000;
+    while (!config?.deviceId) {
+      try {
+        config = await registerDevice(serverUrl, registrationToken);
+      } catch (error: any) {
+        console.error(`Registration failed: ${error?.message || error}. Retrying in ${delay / 1000}s`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, 60000);
+      }
     }
   }
 

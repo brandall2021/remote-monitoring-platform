@@ -24,10 +24,10 @@ Si lo regeneras:
 cd agent
 npm install
 npm run build    # compila a dist/agent.js
-npm run package  # empaqueta agent.exe con pkg (node18-win-x64)
+npm run package  # empaqueta agent-live.exe con pkg (node18-win-x64)
 ```
 
-> Si `agent.exe` previo esta corriendo (bloqueado), se genera `agent-live.exe` como alternativa (el script de package lo maneja).
+> El script genera siempre `agent-live.exe`, que es el nombre que usan los instaladores. Si el binario esta corriendo, detenelo antes de reemplazarlo.
 
 ---
 
@@ -44,7 +44,7 @@ npm run package  # empaqueta agent.exe con pkg (node18-win-x64)
   }
   ```
 - **Fallback a nivel usuario (instalacion manual):** `%APPDATA%\remote-monitor-agent.json` (misma estructura).
-- Si no existe ninguna config, el agente se registra con las variables de entorno `SERVER_URL` y `REGISTRATION_TOKEN` (o el instalador las pide por prompt) y luego guarda la config.
+- El instalador guarda primero una configuracion de arranque (`serverUrl` + token). El agente completa el registro y persiste el `deviceId` al iniciar; esto evita depender de variables de entorno que no existen dentro de una tarea programada.
 - El `registrationToken` guardado es un **token unico por dispositivo** emitido por el server al registrarse. El token compartido de onboarding (`AGENT_REGISTRATION_TOKEN`) solo se usa en el alta.
 
 ---
@@ -173,7 +173,7 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 ## Vista en vivo
 
 - La web pide frames por WebSocket (`live-view-frame`), el server retransmite al agente (`live-command`) y el agente responde con un JPEG (`live-frame-result`).
-- Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing).
+- Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing), usando todos los monitores en Windows 10/11.
 - Los frames **no se guardan en la base de datos** ni como archivos; solo viven en memoria del navegador.
 
 ---
@@ -203,7 +203,7 @@ agent/
 
 | Problema | Solucion |
 |----------|----------|
-| No conecta | Verificar `SERVER_URL` y `REGISTRATION_TOKEN`, y que la config en `%APPDATA%` sea correcta |
+| No conecta | Verificar `serverUrl`/token en la config, el firewall y revisar los reintentos del agente |
 | Aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
 | Screenshot falla | El agente debe correr en la sesion interactiva del usuario (no como servicio) |
 | Vista en vivo no muestra frames | Usar el build con soporte `live-command` (`agent-live.exe`) |

@@ -7,7 +7,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/agent.ts",
     "build": "tsc",
     "start": "node dist/agent.js",
-    "package": "pkg dist/agent.js --targets node18-win-x64 --output agent.exe"
+    "package": "pkg dist/agent.js --targets node18-win-x64 --output agent-live.exe"
   },
   "dependencies": {
     "axios": "^1.6.5",

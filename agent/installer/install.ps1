@@ -25,6 +25,12 @@ $exePath = Join-Path $InstallDir "agent.exe"
 $vbsPath = Join-Path $InstallDir "run-hidden.vbs"
 $configPath = Join-Path $env:APPDATA "remote-monitor-agent.json"
 
+function Write-ConfigNoBom {
+  param([string]$Path, [hashtable]$Config)
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, ($Config | ConvertTo-Json), $utf8NoBom)
+}
+
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 Get-Process -Name "agent" -ErrorAction SilentlyContinue |
@@ -62,8 +68,18 @@ if (-not (Test-Path -LiteralPath $configPath)) {
   if (-not $RegistrationToken) {
     $RegistrationToken = Read-Host "AGENT_REGISTRATION_TOKEN"
   }
-  if ($ServerUrl) { $env:SERVER_URL = $ServerUrl }
-  if ($RegistrationToken) { $env:REGISTRATION_TOKEN = $RegistrationToken }
+  if (-not $ServerUrl -or -not $RegistrationToken) {
+    Write-Error "SERVER_URL y AGENT_REGISTRATION_TOKEN son obligatorios."
+    exit 1
+  }
+  # Persist bootstrap data. Environment variables from this installer process
+  # are not inherited by the scheduled task at the next logon.
+  Write-ConfigNoBom -Path $configPath -Config @{
+    serverUrl = $ServerUrl.TrimEnd('/')
+    registrationToken = $RegistrationToken
+    agentVersion = "1.0.0"
+    heartbeatInterval = 30000
+  }
 }
 
 Start-Process -FilePath "$env:SystemRoot\System32\wscript.exe" -ArgumentList @("`"$vbsPath`"", "`"$exePath`"") -WindowStyle Hidden
