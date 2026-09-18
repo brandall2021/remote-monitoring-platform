@@ -65,6 +65,28 @@ begin
     RunHiddenPath + '" "' + AgentPath + '"';
 end;
 
+function InstallStartupShortcut: Boolean;
+var
+  Shell: Variant;
+  Shortcut: Variant;
+  ShortcutPath: string;
+begin
+  Result := False;
+  try
+    ShortcutPath := ExpandConstant('{userstartup}\RemoteMonitoringAgent.lnk');
+    Shell := CreateOleObject('WScript.Shell');
+    Shortcut := Shell.CreateShortcut(ShortcutPath);
+    Shortcut.TargetPath := ExpandConstant('{sys}\wscript.exe');
+    Shortcut.Arguments := '"' + RunHiddenPath + '" "' + AgentPath + '"';
+    Shortcut.WorkingDirectory := ExpandConstant('{app}');
+    Shortcut.WindowStyle := 7;
+    Shortcut.Save;
+    Result := FileExists(ShortcutPath);
+  except
+    Result := False;
+  end;
+end;
+
 function InstallScheduledTask: Boolean;
 var
   ResultCode: Integer;
@@ -74,6 +96,8 @@ begin
     TaskCommand + '" /RL LIMITED';
   Result := Exec(ExpandConstant('{sys}\schtasks.exe'), Parameters, '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  if not Result then
+    Result := InstallStartupShortcut;
 end;
 
 procedure InitializeWizard;
@@ -138,6 +162,7 @@ begin
     Exec(ExpandConstant('{sys}\schtasks.exe'),
       '/Delete /F /TN "RemoteMonitoringAgent"', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
+    DeleteFile(ExpandConstant('{userstartup}\RemoteMonitoringAgent.lnk'));
     Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM agent.exe', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
     DeleteFile(ConfigFilePath);
