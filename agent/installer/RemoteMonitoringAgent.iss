@@ -23,6 +23,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
 Source: "..\agent-live.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "run-hidden.vbs"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}"
@@ -60,7 +61,7 @@ end;
 
 function TaskCommand: string;
 begin
-  Result := '"' + AgentPath + '"';
+  Result := '"' + ExpandConstant('{sys}\wscript.exe') + '" "' + RunHiddenPath + '"';
 end;
 
 function InstallStartupShortcut: Boolean;
@@ -74,8 +75,8 @@ begin
     ShortcutPath := ExpandConstant('{userstartup}\RemoteMonitoringAgent.lnk');
     Shell := CreateOleObject('WScript.Shell');
     Shortcut := Shell.CreateShortcut(ShortcutPath);
-    Shortcut.TargetPath := AgentPath;
-    Shortcut.Arguments := '';
+    Shortcut.TargetPath := ExpandConstant('{sys}\wscript.exe');
+    Shortcut.Arguments := '"' + RunHiddenPath + '"';
     Shortcut.WorkingDirectory := ExpandConstant('{app}');
     Shortcut.WindowStyle := 7;
     Shortcut.Save;
@@ -147,7 +148,8 @@ begin
     if not InstallScheduledTask then
       MsgBox('No se pudo registrar el inicio automatico del agente.', mbError, MB_OK)
     else
-      Exec(AgentPath, '', '', SW_HIDE, ewNoWait, ResultCode);
+      Exec(ExpandConstant('{sys}\wscript.exe'), '"' + RunHiddenPath + '"',
+        '', SW_HIDE, ewNoWait, ResultCode);
   end;
 end;
 

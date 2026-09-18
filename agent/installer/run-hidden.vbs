@@ -1,2 +1,3 @@
 Set sh = CreateObject("WScript.Shell")
-sh.Run """" & WScript.Arguments(0) & """", 0, False
+agentPath = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\RemoteMonitoringAgent\agent.exe"
+sh.Run """" & agentPath & """", 0, False
