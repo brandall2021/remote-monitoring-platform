@@ -3,6 +3,7 @@ import { promisify } from "util";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { readImageDimensions } from "./imageSize";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -16,7 +17,15 @@ export interface ScreenshotResult {
 }
 
 export interface LiveFrameResult {
-  imageBase64: string;
+  data: Buffer;
+  mimeType: string;
+  width: number;
+  height: number;
+  [key: string]: unknown;
+}
+
+interface CapturedFrame {
+  data: Buffer;
   mimeType: string;
   width: number;
   height: number;
@@ -24,42 +33,44 @@ export interface LiveFrameResult {
 }
 
 export async function takeScreenshot(): Promise<ScreenshotResult> {
+  const frame = await captureFrame("png");
+  return {
+    imageBase64: frame.data.toString("base64"),
+    width: frame.width,
+    height: frame.height,
+    format: "png",
+  };
+}
+
+export async function takeLiveFrame(): Promise<LiveFrameResult> {
+  return captureFrame("jpg");
+}
+
+async function captureFrame(format: "png" | "jpg"): Promise<CapturedFrame> {
+  const mimeType = format === "png" ? "image/png" : "image/jpeg";
+
   try {
     const { default: screenshot } = await import("screenshot-desktop");
-    const imgBuffer = await screenshot({ format: "png" });
-    return {
-      imageBase64: imgBuffer.toString("base64"),
-      width: 0,
-      height: 0,
-      format: "png",
-    };
+    const imgBuffer = await screenshot({ format });
+    return { data: imgBuffer, mimeType, ...requireDimensions(imgBuffer) };
   } catch (error) {
     try {
-      return captureWithPowerShell("png");
+      return await captureWithPowerShell(format, mimeType);
     } catch (fallbackError) {
       throw new Error(`Screenshot failed: ${fallbackError}`);
     }
   }
 }
 
-export async function takeLiveFrame(): Promise<LiveFrameResult> {
-  try {
-    const { default: screenshot } = await import("screenshot-desktop");
-    const imgBuffer = await screenshot({ format: "jpg" });
-    return {
-      imageBase64: imgBuffer.toString("base64"),
-      mimeType: "image/jpeg",
-      width: 0,
-      height: 0,
-    };
-  } catch {
-    return captureWithPowerShell();
+function requireDimensions(buffer: Buffer): { width: number; height: number } {
+  const dimensions = readImageDimensions(buffer);
+  if (!dimensions) {
+    throw new Error("Could not read image dimensions from the captured frame");
   }
+  return dimensions;
 }
 
-function captureWithPowerShell(format: "png"): Promise<ScreenshotResult>;
-function captureWithPowerShell(format?: "jpg"): Promise<LiveFrameResult>;
-async function captureWithPowerShell(format: "jpg" | "png" = "jpg"): Promise<LiveFrameResult | ScreenshotResult> {
+async function captureWithPowerShell(format: "png" | "jpg", mimeType: string): Promise<CapturedFrame> {
   const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "remote-monitor-"));
   const scriptPath = path.join(tempDirectory, "capture.ps1");
   const tempPath = path.join(tempDirectory, `capture.${format}`);
@@ -113,14 +124,14 @@ $g.Dispose()
     const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath]);
     const buffer = fs.readFileSync(tempPath);
     const match = stdout.match(/SIZE:(\d+):(\d+)/);
-    const result = {
-      imageBase64: buffer.toString("base64"),
+    return {
+      data: buffer,
+      mimeType,
       width: match ? parseInt(match[1], 10) : 0,
       height: match ? parseInt(match[2], 10) : 0,
     };
-    return format === "png" ? { ...result, format: "png" } : { ...result, mimeType: "image/jpeg" };
   } catch (fallbackError) {
-    throw new Error(`Live frame failed: ${fallbackError}`);
+    throw new Error(`Capture failed: ${fallbackError}`);
   } finally {
     try { fs.unlinkSync(scriptPath); } catch {}
     try { fs.unlinkSync(tempPath); } catch {}

@@ -16,6 +16,12 @@ interface AgentSocket extends Socket {
 
 let agentNamespace: Namespace | null = null;
 
+function toBuffer(payload: Buffer | ArrayBuffer): Buffer | null {
+  if (Buffer.isBuffer(payload)) return payload;
+  if (payload instanceof ArrayBuffer) return Buffer.from(payload);
+  return null;
+}
+
 export function emitCommandToAgent(
   deviceId: string,
   commandId: string,
@@ -244,21 +250,22 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
       }
     });
 
-    socket.on("live-frame-result", (data: {
-      imageBase64?: string;
-      mimeType?: string;
-      width?: number;
-      height?: number;
-    }) => {
-      if (!data?.imageBase64) return;
-      adminNamespace.to(`live:${deviceId}`).emit("live-frame", {
-        deviceId,
-        imageBase64: data.imageBase64,
-        mimeType: data.mimeType || "image/jpeg",
-        width: data.width,
-        height: data.height,
-      });
-    });
+    socket.on(
+      "live-frame-result",
+      (
+        payload: Buffer | ArrayBuffer,
+        meta?: { mimeType?: string; width?: number; height?: number }
+      ) => {
+        const buffer = toBuffer(payload);
+        if (!buffer) return;
+        adminNamespace.to(`live:${deviceId}`).emit("live-frame", buffer, {
+          deviceId,
+          mimeType: meta?.mimeType || "image/jpeg",
+          width: meta?.width,
+          height: meta?.height,
+        });
+      }
+    );
 
     socket.on("live-frame-error", (data: { error?: string }) => {
       adminNamespace.to(`live:${deviceId}`).emit("live-frame-error", {

@@ -95,6 +95,8 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 
 > **Por que no un servicio de Windows?** Un servicio corre en "Session 0", separado del escritorio, y **no puede capturar la pantalla del usuario**. Por eso el agente se ejecuta al **iniciar sesion** del usuario, donde si tiene acceso al escritorio. Para actualizar el agente: regenerar el exe, copiarlo encima y volver a correr `install.ps1`.
 
+> **Nota:** esto describe el modo por defecto (`standalone`). El modo **Session 0** resuelve justamente ese limite y se documenta en [Modos de ejecucion](#modos-de-ejecucion).
+
 ### Opcion 2: Ejecutable suelto
 
 1. Copiar `agent-live.exe` al PC destino.
@@ -130,6 +132,7 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 | `-InstallDir` | Carpeta de instalacion | `%ProgramFiles%\RemoteMonitoringAgent` |
 | `-ConfigDir` | Carpeta de config de maquina | `%ProgramData%\RemoteMonitoringAgent` |
 | `-SkipTaskRegistration` | No registrar la tarea (solo copiar/registrar) | off |
+| `-Session0` | Instalar en modo Session 0 (supervisor como SYSTEM al inicio de Windows) | off |
 
 **Empaquetado:**
 
@@ -140,6 +143,60 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 > El token compartido queda embebido en el paquete. El server solo lo valida en
 > el alta y luego emite un token unico por dispositivo, por lo que todas las
 > PCs pueden usar el mismo token de onboarding.
+
+---
+
+## Modos de ejecucion
+
+El agente tiene tres roles, que se seleccionan con `--role=<rol>` o con la variable
+de entorno `RM_AGENT_ROLE`:
+
+| Rol | Donde corre | Que hace |
+|-----|-------------|----------|
+| `standalone` | Sesion interactiva del usuario (logon) | Modo por defecto. Habla con el server y captura en el escritorio. Es el comportamiento historico. |
+| `supervisor` | Session 0 como SYSTEM, al inicio de Windows | Habla con el server. No captura. Levanta un worker en la sesion interactiva. |
+| `session` | Sesion interactiva del usuario | No habla con el server. Espera pedidos del supervisor por named pipe y ejecuta la captura. |
+
+### Modo Session 0
+
+Resuelve el limite del modo `standalone`: el agente queda online **antes de que
+nadie se loguee**, y aun asi puede capturar la pantalla del usuario.
+
+```
+Session 0 (SYSTEM)                    Sesion interactiva del usuario
+--------------------------            --------------------------------
+supervisor  ── WSS ──> server
+    │
+    ├─ start-session.ps1  ────────────>  session worker
+    │   (WTS + CreateProcessAsUser)         │
+    └<────────── named pipe \\.\pipe\rmagent-session ────────┘
+        pedidos: live-frame / screenshot
+```
+
+Instalacion (con `install-silent.ps1`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\install-silent.ps1 `
+  -ServerUrl https://monitor.recuperocrediticio.com `
+  -RegistrationToken TU_TOKEN `
+  -Session0
+```
+
+Con `-Session0` se registra una tarea **al inicio de Windows** que corre
+`agent.exe --role=supervisor` como SYSTEM, y **no** se crea la tarea de logon.
+El supervisor lanza `installer/start-session.ps1`, que usa
+`WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` + `DuplicateTokenEx` +
+`CreateProcessAsUserW` sobre `winsta0\default` para crear el worker dentro de la
+sesion del usuario. Si no hay sesion interactiva, el bridge no hace nada y el
+supervisor reintenta cada 5s; si el bridge falla, entra en cooldown de 30s.
+
+Requiere que el supervisor corra como SYSTEM (el token de la sesion interactiva
+solo se puede obtener desde ese contexto). El script del bridge se copia a
+`%ProgramFiles%\RemoteMonitoringAgent\start-session.ps1` y se puede sobreescribir
+con la variable `RM_BRIDGE_SCRIPT`.
+
+Cuando no hay ninguna sesion interactiva, `SCREENSHOT` y la vista en vivo devuelven
+un error explicito en vez de una imagen en negro.
 
 ---
 
@@ -190,11 +247,19 @@ agent/
 │   ├── agent.ts               # Entry point (comandos + vista en vivo)
 │   ├── commands.ts            # Ejecucion de comandos y captura de frames
 │   ├── config.ts              # Configuracion local
+│   ├── imageSize.ts           # Parser de cabeceras PNG/JPEG (dimensiones reales)
+│   ├── role.ts                # Resolucion del rol (standalone/supervisor/session)
+│   ├── sessionProtocol.ts     # Framing binario del named pipe
+│   ├── sessionSupervisor.ts   # Lado Session 0: pipe + proxy de pedidos
+│   ├── sessionWorker.ts       # Lado sesion interactiva: ejecuta la captura
+│   ├── sessionBridge.ts       # Politica de reintentos del bridge
+│   ├── sessionBridgeRunner.ts # Invocacion del script PowerShell del bridge
 │   └── screenshot-desktop.d.ts
 ├── installer/
 │   ├── install.ps1            # Instalador interactivo (PC individual)
 │   ├── uninstall.ps1          # Desinstalador interactivo
 │   ├── install-silent.ps1     # Silencioso para PDQ/Intune/SCCM (contexto SYSTEM)
+│   ├── start-session.ps1      # Bridge Session 0 -> sesion interactiva
 │   ├── uninstall-silent.ps1   # Desinstalador silencioso
 │   └── run-hidden.vbs         # Lanzador oculto
 ├── agent-live.exe             # Binario pre-compilado (vista en vivo + JPEG)
@@ -209,8 +274,9 @@ agent/
 |----------|----------|
 | No conecta | Verificar `serverUrl`/token en la config, el firewall y revisar los reintentos del agente |
 | Aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
-| Screenshot falla | El agente debe correr en la sesion interactiva del usuario (no como servicio) |
+| Screenshot falla | En modo `standalone` el agente debe correr en la sesion interactiva del usuario. En modo `supervisor` no hay session worker: verificar que haya un usuario logueado |
 | Vista en vivo no muestra frames | Usar el build con soporte `live-command` (`agent-live.exe`) |
+| En modo Session 0 el supervisor no captura | No hay sesion interactiva activa, o `start-session.ps1` no esta junto al exe. El supervisor reintenta solo cada 5s |
 | `install.ps1` falla con EPERM | El exe esta en uso; el instalador ya espera hasta 10s a que el proceso lo libere |
 | Segundo equipo no se registra (400 unique) | El server debe estar con el build que emite un token unico por dispositivo (redeploy) |
 | `Failed to load config: Unexpected token` | El JSON fue escrito con BOM (PowerShell 5.1 `-Encoding UTF8`); se tolera desde el build actual. Regenerar la config con `WriteAllText` sin BOM si usas un instalador viejo |

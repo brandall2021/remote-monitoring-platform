@@ -262,7 +262,9 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 ### Vista en vivo (streaming)
 
 - La web pide frames por WebSocket (`live-view-frame`), el server retransmite al agente (`live-command`) y el agente responde con un JPEG (`live-frame-result`).
+- Los frames viajan como **binario crudo** por el WebSocket, no como base64 dentro de JSON. Esto elimina la inflacion de ~33% del base64 en el salto de red; el navegador los reconstruye con `Blob` + object URL.
 - Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing).
+- Las dimensiones de cada frame se leen parseando la cabecera del PNG/JPEG en el agente, no hardcodeadas.
 - Los frames **no se guardan en la base de datos** ni como archivos; solo viven en memoria del navegador.
 - Desde la web se puede **grabar** la vista en vivo y descargar un `.webm` (~4 fps, redibuja el ultimo frame cada 250ms para cubrir toda la duracion).
 
@@ -299,14 +301,19 @@ remote-monitoring-platform/
 │
 ├── agent/                     # Agente Windows
 │   ├── src/
-│   │   ├── agent.ts           # Entry point (comandos + vista en vivo)
+│   │   ├── agent.ts           # Entry point (roles + comandos + vista en vivo)
 │   │   ├── commands.ts        # Ejecucion de comandos y captura de frames
 │   │   ├── config.ts          # Configuracion local
+│   │   ├── imageSize.ts       # Parser de cabeceras PNG/JPEG
+│   │   ├── role.ts            # Rol: standalone | supervisor | session
+│   │   ├── sessionProtocol.ts # Framing binario del named pipe
+│   │   ├── sessionSupervisor.ts / sessionWorker.ts / sessionBridge.ts
 │   │   └── screenshot-desktop.d.ts
-│   ├── installer/             # Instaladores (tarea al iniciar sesion)
+│   ├── installer/             # Instaladores (tarea al iniciar sesion, o Session 0 con -Session0)
 │   │   ├── install.ps1            # Interactivo (PC individual)
 │   │   ├── uninstall.ps1
 │   │   ├── install-silent.ps1     # Silencioso para PDQ/Intune/SCCM (contexto SYSTEM)
+│   │   ├── start-session.ps1      # Bridge Session 0 -> sesion interactiva
 │   │   ├── uninstall-silent.ps1
 │   │   └── run-hidden.vbs
 │   ├── agent-live.exe         # Binario pre-compilado (vista en vivo + JPEG)

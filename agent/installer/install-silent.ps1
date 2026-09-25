@@ -5,7 +5,8 @@ param(
   [string]$TaskName = "RemoteMonitoringAgent",
   [string]$InstallDir = "$env:ProgramFiles\RemoteMonitoringAgent",
   [string]$ConfigDir = "$env:ProgramData\RemoteMonitoringAgent",
-  [switch]$SkipTaskRegistration
+  [switch]$SkipTaskRegistration,
+  [switch]$Session0
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,12 @@ while (
 }
 
 Copy-Item -LiteralPath $AgentPath -Destination $exePath -Force
+
+# El bridge de sesion es necesario solo en modo Session 0: lo usa el supervisor
+# para lanzar el worker dentro de la sesion interactiva del usuario.
+if (Test-Path -LiteralPath "$PSScriptRoot\start-session.ps1") {
+  Copy-Item -LiteralPath "$PSScriptRoot\start-session.ps1" -Destination (Join-Path $InstallDir "start-session.ps1") -Force
+}
 
 @"
 Set sh = CreateObject("WScript.Shell")
@@ -126,6 +133,31 @@ if (-not $existingConfig -or -not $existingConfig.deviceId) {
 # Permiso de escritura para que el agente (usuario comun) pueda guardar el
 # deviceId de registro en la config de maquina si fuera necesario.
 icacls $ConfigDir /grant "*S-1-5-32-545:(OI)(CI)M" /T | Out-Null
+
+if ($Session0) {
+  Write-Host "Registrando tarea '$TaskName' al inicio de Windows como SYSTEM (Session 0) ..."
+  $action = New-ScheduledTaskAction -Execute $exePath -Argument "--role=supervisor"
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+  $principal = New-ScheduledTaskPrincipal -UserId "S-1-5-18" -LogonType ServiceAccount -RunLevel Highest
+  try {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+      -Settings $settings -Principal $principal -Description "Agente de Monitoreo Remoto (Session 0)" -Force | Out-Null
+  } catch {
+    Write-Warning "Register-ScheduledTask fallo ($($_.Exception.Message)), probando schtasks ..."
+    & schtasks.exe /create /f /tn $TaskName /tr "`"$exePath`" --role=supervisor" /sc onstart /ru SYSTEM /rl HIGHEST | Out-Null
+  }
+
+  Write-Host ""
+  Write-Host "Instalacion completada (modo Session 0)."
+  Write-Host "  Ejecutable: $exePath"
+  Write-Host "  Config:     $configPath"
+  Write-Host "  Tarea:      $TaskName (al inicio de Windows, SYSTEM)"
+  Write-Host ""
+  Write-Host "Desinstalacion:"
+  Write-Host "  powershell -ExecutionPolicy Bypass -File `"$PSScriptRoot\uninstall-silent.ps1`""
+  exit 0
+}
 
 if (-not $SkipTaskRegistration) {
   Write-Host "Registrando tarea '$TaskName' al logon de cualquier usuario ..."

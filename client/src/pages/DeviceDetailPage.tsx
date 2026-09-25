@@ -68,7 +68,15 @@ export default function DeviceDetailPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const recordingPumpRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastFrameRef = useRef<{ imageBase64: string; mimeType: string } | null>(null);
+  const lastFrameRef = useRef<{ url: string; mimeType: string } | null>(null);
+  const frameUrlRef = useRef<string | null>(null);
+
+  const releaseFrameUrl = useCallback(() => {
+    const previous = frameUrlRef.current;
+    if (!previous) return;
+    setTimeout(() => URL.revokeObjectURL(previous), 1000);
+    frameUrlRef.current = null;
+  }, []);
 
   const loadDevice = useCallback(async () => {
     if (!id) return;
@@ -101,16 +109,20 @@ export default function DeviceDetailPage() {
     if (!token) return;
     const socket = getAdminSocket(token);
 
-    const onFrame = (data: { deviceId: string; imageBase64: string; mimeType?: string }) => {
-      if (data.deviceId !== id) return;
-      setLiveFrame(`data:${data.mimeType || "image/jpeg"};base64,${data.imageBase64}`);
+    const onFrame = (
+      payload: ArrayBuffer | Blob,
+      meta: { deviceId: string; mimeType?: string }
+    ) => {
+      if (meta?.deviceId !== id) return;
+      const mimeType = meta.mimeType || "image/jpeg";
+      const url = URL.createObjectURL(new Blob([payload], { type: mimeType }));
+      releaseFrameUrl();
+      frameUrlRef.current = url;
+      setLiveFrame(url);
       setLiveError(null);
-      lastFrameRef.current = {
-        imageBase64: data.imageBase64,
-        mimeType: data.mimeType || "image/jpeg",
-      };
+      lastFrameRef.current = { url, mimeType };
       if (recordingRef.current) {
-        drawFrameToCanvas(data.imageBase64, data.mimeType || "image/jpeg");
+        drawFrameToCanvas(url);
       }
     };
     const onFrameError = (data: { deviceId: string; error: string }) => {
@@ -171,7 +183,7 @@ export default function DeviceDetailPage() {
     [liveActive, id]
   );
 
-  const drawFrameToCanvas = useCallback((imageBase64: string, mimeType: string) => {
+  const drawFrameToCanvas = useCallback((url: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const img = new Image();
@@ -183,7 +195,7 @@ export default function DeviceDetailPage() {
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     };
-    img.src = `data:${mimeType};base64,${imageBase64}`;
+    img.src = url;
   }, []);
 
   const startRecording = useCallback(() => {
@@ -246,18 +258,11 @@ export default function DeviceDetailPage() {
         const canvas = canvasRef.current;
         const frame = lastFrameRef.current;
         if (!canvas || !frame) return;
-        const img = new Image();
-        img.onload = () => {
-          const ctx = canvas.getContext("2d");
-          if (ctx && canvas.width > 0) {
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          }
-        };
-        img.src = `data:${frame.mimeType};base64,${frame.imageBase64}`;
+        drawFrameToCanvas(frame.url);
       }, 250);
     };
     img.src = liveFrame;
-  }, [liveFrame, device]);
+  }, [liveFrame, device, drawFrameToCanvas]);
 
   const stopRecording = useCallback(() => {
     if (recorderRef.current && recorderRef.current.state !== "inactive") {

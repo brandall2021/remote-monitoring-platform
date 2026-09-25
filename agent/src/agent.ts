@@ -4,6 +4,7 @@ import { AgentConfig, loadConfig, saveConfig, getSystemInfo, generateDeviceId } 
 import {
   takeScreenshot,
   takeLiveFrame,
+  LiveFrameResult,
   getSystemInfo as getDetailedSystemInfo,
   getProcessList,
   lockScreen,
@@ -11,11 +12,20 @@ import {
   restart,
   logout,
 } from "./commands";
+import { AgentRole, resolveRole } from "./role";
+import { SessionSupervisor } from "./sessionSupervisor";
+import { SessionBridge } from "./sessionBridge";
+import { SessionWorker } from "./sessionWorker";
+import { createPowerShellBridgeRunner, defaultBridgeScriptPath } from "./sessionBridgeRunner";
 
 let socket: Socket | null = null;
 let config: AgentConfig | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let isCapturing = false;
+let role: AgentRole = "standalone";
+let supervisor: SessionSupervisor | null = null;
+let sessionBridge: SessionBridge | null = null;
+let sessionWorker: SessionWorker | null = null;
 
 async function registerDevice(serverUrl: string, registrationToken: string): Promise<AgentConfig> {
   console.log("Registering device...");
@@ -106,9 +116,8 @@ async function handleLiveCommand(): Promise<void> {
 
   isCapturing = true;
   try {
-    const result = await takeLiveFrame();
-    socket.emit("live-frame-result", {
-      imageBase64: result.imageBase64,
+    const result = await requestLiveFrame();
+    socket.emit("live-frame-result", result.data, {
       mimeType: result.mimeType,
       width: result.width,
       height: result.height,
@@ -120,6 +129,30 @@ async function handleLiveCommand(): Promise<void> {
   } finally {
     isCapturing = false;
   }
+}
+
+async function requestScreenshot(): Promise<Record<string, unknown>> {
+  if (role === "supervisor" && supervisor) {
+    const frame = (await supervisor.request("screenshot")) as {
+      data?: Buffer;
+      width?: number;
+      height?: number;
+    };
+    return {
+      imageBase64: frame.data ? frame.data.toString("base64") : "",
+      width: frame.width || 0,
+      height: frame.height || 0,
+      format: "png",
+    };
+  }
+  return takeScreenshot() as unknown as Record<string, unknown>;
+}
+
+async function requestLiveFrame(): Promise<LiveFrameResult> {
+  if (role === "supervisor" && supervisor) {
+    return (await supervisor.request("live-frame")) as LiveFrameResult;
+  }
+  return takeLiveFrame();
 }
 
 function parseHeartbeat(value: string | undefined): number {
@@ -137,7 +170,7 @@ async function handleCommand(data: {
 
     switch (data.type) {
       case "SCREENSHOT":
-        result = await takeScreenshot();
+        result = await requestScreenshot();
         break;
 
       case "SYSTEM_INFO":
@@ -210,8 +243,20 @@ function stopHeartbeat(): void {
 }
 
 async function main(): Promise<void> {
+  role = resolveRole(process.argv, process.env);
+
   console.log("=== Remote Monitoring Agent ===");
   console.log(`Version: ${process.env.AGENT_VERSION || "1.0.0"}`);
+  console.log(`Role: ${role}`);
+
+  if (role === "session") {
+    await startSessionRole();
+    return;
+  }
+
+  if (role === "supervisor") {
+    await startSupervisor();
+  }
 
   config = loadConfig();
 
@@ -247,6 +292,8 @@ async function main(): Promise<void> {
     console.log("Shutting down...");
     stopHeartbeat();
     if (socket) socket.disconnect();
+    if (sessionBridge) sessionBridge.stop();
+    if (supervisor) supervisor.stop();
     process.exit(0);
   });
 
@@ -254,8 +301,46 @@ async function main(): Promise<void> {
     console.log("Shutting down...");
     stopHeartbeat();
     if (socket) socket.disconnect();
+    if (sessionBridge) sessionBridge.stop();
+    if (supervisor) supervisor.stop();
     process.exit(0);
   });
+}
+
+async function startSessionRole(): Promise<void> {
+  sessionWorker = new SessionWorker();
+  sessionWorker.run();
+  console.log("Session worker running. Waiting for requests from the supervisor.");
+
+  process.on("SIGINT", () => {
+    if (sessionWorker) sessionWorker.stop();
+    process.exit(0);
+  });
+
+  process.on("SIGTERM", () => {
+    if (sessionWorker) sessionWorker.stop();
+    process.exit(0);
+  });
+}
+
+async function startSupervisor(): Promise<void> {
+  supervisor = new SessionSupervisor({
+    onWorkerChange: (hasWorker) => {
+      if (!hasWorker && sessionBridge) sessionBridge.notifyWorkerDisconnected();
+    },
+  });
+  await supervisor.start();
+  console.log("Session pipe listening.");
+
+  sessionBridge = new SessionBridge({
+    runBridge: createPowerShellBridgeRunner({
+      scriptPath: defaultBridgeScriptPath(),
+      agentExePath: process.execPath,
+    }),
+    hasLiveWorker: () => (supervisor ? supervisor.hasLiveWorker() : false),
+  });
+  sessionBridge.start();
+  console.log("Session bridge armed.");
 }
 
 main().catch((error) => {
