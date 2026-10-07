@@ -2,6 +2,7 @@ import net from "net";
 import os from "os";
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { NoSessionWorkerError, SessionSupervisor } from "./sessionSupervisor";
 import { FrameDecoder, SessionRequestType, encodeFrame } from "./sessionProtocol";
@@ -12,6 +13,9 @@ const supervisors: SessionSupervisor[] = [];
 const sockets: net.Socket[] = [];
 
 function pipePath(): string {
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\rmagent-test-${process.pid}-${randomUUID()}`;
+  }
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rmagent-test-")), "session.sock");
 }
 
@@ -42,7 +46,9 @@ function connectWorker(
         }
       }
     });
-    socket.on("connect", () => resolve(socket));
+    // On Windows the client-side named-pipe connection can fire just before
+    // the server's connection callback has attached the worker.
+    socket.on("connect", () => setTimeout(() => resolve(socket), 10));
     socket.on("error", reject);
   });
 }
@@ -134,5 +140,15 @@ describe("SessionSupervisor", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     await expect(supervisor.request("screenshot")).rejects.toBeInstanceOf(NoSessionWorkerError);
+  });
+
+  it("rejects an in-flight request as soon as its worker disconnects", async () => {
+    const supervisor = await createSupervisor({ requestTimeoutMs: 2000 });
+    const worker = await connectWorker(supervisor["pipeName"]);
+
+    const request = supervisor.request("screenshot");
+    worker.destroy();
+
+    await expect(request).rejects.toBeInstanceOf(NoSessionWorkerError);
   });
 });

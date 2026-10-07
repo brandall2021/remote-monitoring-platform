@@ -138,7 +138,7 @@ if ($Session0) {
   Write-Host "Registrando tarea '$TaskName' al inicio de Windows como SYSTEM (Session 0) ..."
   $action = New-ScheduledTaskAction -Execute $exePath -Argument "--role=supervisor"
   $trigger = New-ScheduledTaskTrigger -AtStartup
-  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1)
   $principal = New-ScheduledTaskPrincipal -UserId "S-1-5-18" -LogonType ServiceAccount -RunLevel Highest
   try {
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
@@ -146,6 +146,14 @@ if ($Session0) {
   } catch {
     Write-Warning "Register-ScheduledTask fallo ($($_.Exception.Message)), probando schtasks ..."
     & schtasks.exe /create /f /tn $TaskName /tr "`"$exePath`" --role=supervisor" /sc onstart /ru SYSTEM /rl HIGHEST | Out-Null
+  }
+
+  # AtStartup does not fire until the next boot, so also start the supervisor
+  # now. The task settings restart it if the process exits unexpectedly.
+  try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+  } catch {
+    & schtasks.exe /run /tn $TaskName | Out-Null
   }
 
   Write-Host ""

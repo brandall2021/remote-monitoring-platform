@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/agent.js",
     "package": "pkg dist/agent.js --targets node18-win-x64 --output agent-live.exe",
+    "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File installer/build-installer.ps1",
     "test": "vitest run",
     "test:watch": "vitest"
   },

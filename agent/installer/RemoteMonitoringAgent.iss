@@ -1,7 +1,7 @@
 ; Build with Inno Setup 6: ISCC.exe RemoteMonitoringAgent.iss
 
 #define AppName "Remote Monitoring Agent"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppPublisher "Remote Monitoring Platform"
 
 [Setup]
@@ -9,101 +9,48 @@ AppId={{8A5D1E8E-8D2A-4C04-A7E7-4D20C99D7C31}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={localappdata}\RemoteMonitoringAgent
+DefaultDirName={autopf}\RemoteMonitoringAgent
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 OutputDir=..\..
 OutputBaseFilename=RemoteMonitoringAgentSetup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#AppName}
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+CloseApplications=yes
+RestartApplications=no
 
 [Files]
-Source: "..\agent-live.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "run-hidden.vbs"; DestDir: "{app}"; Flags: ignoreversion
+; The installer script consumes these files from {tmp} and performs an atomic
+; machine-wide install into Program Files / ProgramData.
+Source: "..\agent-live.exe"; Flags: dontcopy
+Source: "install-silent.ps1"; Flags: dontcopy
+Source: "start-session.ps1"; Flags: dontcopy
+Source: "uninstall-silent.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
-[Dirs]
-Name: "{app}"
-
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}"
+[UninstallRun]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\uninstall-silent.ps1"" -InstallDir ""{app}"" -ConfigDir ""{commonappdata}\RemoteMonitoringAgent"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveAgent"
 
 [Code]
 var
   ConfigPage: TInputQueryWizardPage;
 
-function JsonEscape(const Value: string): string;
+function QuotePowerShell(const Value: string): string;
 begin
   Result := Value;
-  StringChangeEx(Result, '\', '\\', True);
-  StringChangeEx(Result, '"', '\"', True);
-  StringChangeEx(Result, #13, '\r', True);
-  StringChangeEx(Result, #10, '\n', True);
-end;
-
-function ConfigFilePath: string;
-begin
-  Result := ExpandConstant('{userappdata}\remote-monitor-agent.json');
-end;
-
-function AgentPath: string;
-begin
-  Result := ExpandConstant('{app}\agent.exe');
-end;
-
-function RunHiddenPath: string;
-begin
-  Result := ExpandConstant('{app}\run-hidden.vbs');
-end;
-
-function TaskCommand: string;
-begin
-  Result := '"' + ExpandConstant('{sys}\wscript.exe') + '" "' + RunHiddenPath + '"';
-end;
-
-function InstallStartupShortcut: Boolean;
-var
-  Shell: Variant;
-  Shortcut: Variant;
-  ShortcutPath: string;
-begin
-  Result := False;
-  try
-    ShortcutPath := ExpandConstant('{userstartup}\RemoteMonitoringAgent.lnk');
-    Shell := CreateOleObject('WScript.Shell');
-    Shortcut := Shell.CreateShortcut(ShortcutPath);
-    Shortcut.TargetPath := ExpandConstant('{sys}\wscript.exe');
-    Shortcut.Arguments := '"' + RunHiddenPath + '"';
-    Shortcut.WorkingDirectory := ExpandConstant('{app}');
-    Shortcut.WindowStyle := 7;
-    Shortcut.Save;
-    Result := FileExists(ShortcutPath);
-  except
-    Result := False;
-  end;
-end;
-
-function InstallScheduledTask: Boolean;
-var
-  ResultCode: Integer;
-  Parameters: string;
-begin
-  Parameters := '/Create /F /SC ONLOGON /TN "RemoteMonitoringAgent" /TR "' +
-    TaskCommand + '" /RL LIMITED';
-  Result := Exec(ExpandConstant('{sys}\schtasks.exe'), Parameters, '', SW_HIDE,
-    ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
-  if not Result then
-    Result := InstallStartupShortcut;
+  StringChangeEx(Result, '"', '""', True);
+  Result := '"' + Result + '"';
 end;
 
 procedure InitializeWizard;
 begin
   ConfigPage := CreateInputQueryPage(wpSelectDir,
     'Configuracion del agente', 'Conectar este equipo al servidor',
-    'Ingrese la URL publica y el token de registro del servidor.');
+    'Ingrese la URL HTTPS y el token de registro. El agente se ejecutara oculto al arrancar Windows.');
   ConfigPage.Add('URL del servidor:', False);
   ConfigPage.Add('Token de registro:', True);
   ConfigPage.Values[0] := 'https://monitor.recuperocrediticio.com';
@@ -111,59 +58,53 @@ begin
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  ServerUrl: string;
 begin
   Result := True;
-  if CurPageID = ConfigPage.ID then begin
-    if Trim(ConfigPage.Values[0]) = '' then begin
-      MsgBox('La URL del servidor es obligatoria.', mbError, MB_OK);
-      Result := False;
-    end else if Trim(ConfigPage.Values[1]) = '' then begin
-      MsgBox('El token de registro es obligatorio.', mbError, MB_OK);
-      Result := False;
-    end;
+  if CurPageID <> ConfigPage.ID then
+    exit;
+
+  ServerUrl := Lowercase(Trim(ConfigPage.Values[0]));
+  if Pos('https://', ServerUrl) <> 1 then begin
+    MsgBox('La URL del servidor debe comenzar con https://.', mbError, MB_OK);
+    Result := False;
+  end else if Trim(ConfigPage.Values[1]) = '' then begin
+    MsgBox('El token de registro es obligatorio.', mbError, MB_OK);
+    Result := False;
   end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ConfigJson: string;
+  PowerShellPath: string;
+  InstallScript: string;
+  AgentPayload: string;
+  Parameters: string;
   ResultCode: Integer;
 begin
-  if CurStep = ssInstall then begin
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM agent.exe', '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-  end;
+  if CurStep <> ssPostInstall then
+    exit;
 
-  if CurStep = ssPostInstall then begin
-    ConfigJson := '{' +
-      '"serverUrl":"' + JsonEscape(Trim(ConfigPage.Values[0])) + '",' +
-      '"registrationToken":"' + JsonEscape(ConfigPage.Values[1]) + '",' +
-      '"agentVersion":"{#AppVersion}",' +
-      '"heartbeatInterval":30000' +
-      '}';
+  ExtractTemporaryFile('agent-live.exe');
+  ExtractTemporaryFile('install-silent.ps1');
+  ExtractTemporaryFile('start-session.ps1');
 
-    if not SaveStringToFile(ConfigFilePath, ConfigJson + #13#10, False) then
-      MsgBox('No se pudo guardar la configuracion del agente.', mbError, MB_OK);
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  InstallScript := ExpandConstant('{tmp}\install-silent.ps1');
+  AgentPayload := ExpandConstant('{tmp}\agent-live.exe');
+  Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    QuotePowerShell(InstallScript) +
+    ' -ServerUrl ' + QuotePowerShell(Trim(ConfigPage.Values[0])) +
+    ' -RegistrationToken ' + QuotePowerShell(ConfigPage.Values[1]) +
+    ' -AgentPath ' + QuotePowerShell(AgentPayload) +
+    ' -InstallDir ' + QuotePowerShell(ExpandConstant('{app}')) +
+    ' -ConfigDir ' + QuotePowerShell(ExpandConstant('{commonappdata}\RemoteMonitoringAgent')) +
+    ' -Session0';
 
-    if not InstallScheduledTask then
-      MsgBox('No se pudo registrar el inicio automatico del agente.', mbError, MB_OK)
-    else
-      Exec(ExpandConstant('{sys}\wscript.exe'), '"' + RunHiddenPath + '"',
-        '', SW_HIDE, ewNoWait, ResultCode);
-  end;
-end;
-
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  ResultCode: Integer;
-begin
-  if CurUninstallStep = usUninstall then begin
-    Exec(ExpandConstant('{sys}\schtasks.exe'),
-      '/Delete /F /TN "RemoteMonitoringAgent"', '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-    DeleteFile(ExpandConstant('{userstartup}\RemoteMonitoringAgent.lnk'));
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM agent.exe', '', SW_HIDE,
-      ewWaitUntilTerminated, ResultCode);
-    DeleteFile(ConfigFilePath);
+  if (not Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+     (ResultCode <> 0) then begin
+    MsgBox('No se pudo instalar o iniciar el agente. Codigo: ' + IntToStr(ResultCode), mbError, MB_OK);
+    RaiseException('La instalacion del agente fallo.');
   end;
 end;

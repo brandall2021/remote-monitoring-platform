@@ -54,8 +54,28 @@ npm run package  # empaqueta agent-live.exe con pkg (node18-win-x64)
 ### Opcion 1: Instalador (recomendado)
 
 Para una instalacion grafica se puede compilar `installer/RemoteMonitoringAgent.iss`
-con Inno Setup 6. El instalador pide la URL y el token de registro, crea la
-configuracion del usuario y registra el agente al iniciar Windows.
+con Inno Setup 6. El instalador pide la URL y el token de registro, solicita
+permisos de administrador y realiza una instalacion por equipo en modo Session 0:
+
+1. Instala el agente en `%ProgramFiles%\RemoteMonitoringAgent`.
+2. Guarda la configuracion compartida en `%ProgramData%\RemoteMonitoringAgent`.
+3. Registra una tarea como `SYSTEM` al arrancar Windows, sin mostrar ventanas.
+4. Inicia el supervisor inmediatamente y lo reinicia si termina inesperadamente.
+5. Cuando un usuario inicia sesion, crea automaticamente el worker interactivo
+   necesario para capturas y vista en vivo.
+
+Para generar el instalador:
+
+```powershell
+cd agent
+npm run build
+npm run package
+npm run installer
+```
+
+El resultado es `RemoteMonitoringAgentSetup.exe` en la raiz del repositorio.
+Requiere Inno Setup 6 en la maquina de compilacion; la PC destino no necesita
+Node.js, PowerShell adicional ni Inno Setup.
 
 `agent/installer/install.ps1`:
 

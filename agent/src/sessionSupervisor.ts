@@ -21,6 +21,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  worker: net.Socket;
 }
 
 export interface SessionSupervisorOptions {
@@ -89,8 +90,10 @@ export class SessionSupervisor {
 
       if (typeof timer.unref === "function") timer.unref();
 
-      this.pending.set(id, { resolve, reject, timer });
-      socket.write(encodeFrame({ id, kind: "request", type }));
+      this.pending.set(id, { resolve, reject, timer, worker: socket });
+      socket.write(encodeFrame({ id, kind: "request", type }), (error) => {
+        if (error) this.rejectPendingForWorker(socket, new Error(`Failed to send session request: ${error.message}`));
+      });
     });
   }
 
@@ -118,7 +121,17 @@ export class SessionSupervisor {
 
   private dropWorker(socket: net.Socket): void {
     if (!this.workers.delete(socket)) return;
+    this.rejectPendingForWorker(socket, new NoSessionWorkerError());
     this.notifyWorkerChange();
+  }
+
+  private rejectPendingForWorker(socket: net.Socket, error: Error): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.worker !== socket) continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    }
   }
 
   private notifyWorkerChange(): void {
