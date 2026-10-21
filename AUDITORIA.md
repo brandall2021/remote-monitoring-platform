@@ -443,3 +443,34 @@ Session 0 corre con `--status-only` para no duplicar el agente.
 4. **El aviso de la Ley 25.326 sigue siendo un template.** El `.iss` ahora muestra una pantalla de
    aviso con qué se instala y cómo se quita, pero el texto de "responsable del dato" y la política de
    privacidad la tiene que completar el empleador antes de desplegar.
+
+---
+
+## 12. Hallazgo de despliegue (2026-10-21): nginx no arrancaba y el dominio daba 502
+
+**D-1 (despliegue, introducido por la remediación).** El commit `feef1fb` agregó hardening a las dos
+configuraciones de nginx y con él una directiva que no existe: `proxy_set_buffering off;` en el
+`location /socket.io` de `nginx.conf` y de `client/nginx.conf`. La correcta es `proxy_buffering off;`.
+Nginx la rechaza en el parseo (`[emerg] unknown directive "proxy_set_buffering"`), no levanta, y como
+el `CMD` de la imagen combinada es `nginx && migrate deploy && seed && server` (todo con `&&`, con `sh -c`
+de PID 1), el fallo de nginx se lleva puesto al API: el contenedor entra en crash-loop y Traefik
+responde **502 en todo el dominio, incluido `/`**. Evidencia observada el 2026-10-21 23:09 UTC:
+`/api/health`, `/` y `/socket.io/?EIO=4&transport=polling` devolvían 502 con `Alt-Svc: h3` (proxy, sin
+backend sano), mientras el build de imagen había terminado ✅.
+
+**Segundo defecto en la misma familia (no llegó a manifestarse).** `client/nginx.conf` declaraba el
+bloque `map $http_upgrade $connection_upgrade` **dentro** de `server`. `map` solo es válida en contexto
+`http`; ese archivo se incluye desde `conf.d/` (que ya está dentro de `http`), así que en el despliegue
+con `docker-compose.dokploy.yml` nginx habría fallado con `"map" directive is not allowed here`. En la
+imagen combinada no ocurría porque ahí el `map` está correctamente en `http`.
+
+**Arreglo.** `proxy_buffering off;` en ambas configs y `map` movido al nivel de archivo en
+`client/nginx.conf`. Además los dos `Dockerfile` (raíz y `client/`) ahora corren **`RUN nginx -t`**
+después de copiar la config: una directiva inválida o fuera de contexto tiene que romper el build, no
+producción. Ese fue el agujero real del hallazgo — no había ninguna validación de la config de nginx
+en el pipeline, y `tsc`/jest no la cubren.
+
+**Verificación.** `grep -rn proxy_set_buffering` sin resultados sobre directivas (queda solo en un
+comentario), balance de llaves y anidación revisados a mano en ambos archivos. **`nginx -t` no se pudo
+correr localmente** (no hay nginx ni Docker en esta máquina); queda como verificación pendiente en el
+proximo build de Dokploy, donde ahora forma parte del build.

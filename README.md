@@ -558,6 +558,9 @@ remote-monitoring-platform/
 | Video grabado corto | Solo aplicaba a builds previos al fix del "pump" de redibujado (commit `0e3b93d`) |
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |
 | El contenedor no arranca: `JWT_SECRET no está definido` | Fail-fast intencional. Definir `JWT_SECRET`, `JWT_REFRESH_SECRET` y `AGENT_REGISTRATION_TOKEN` (`openssl rand -hex 32`); los valores de ejemplo (`change-this`, `secret`) tambien se rechazan |
+| El dominio devuelve 502 en todo (tambien en `/`) y el contenedor hace crash-loop | El `CMD` de la imagen combinada encadena `nginx && migrate && seed && server`, asi que cualquier fallo se lleva a nginx y el 502 no es solo de la API. Ver el log de arranque: `nginx: [emerg] unknown directive ...` es config invalida (los builds ahora corren `nginx -t` para que eso explote en el build, no en produccion); `P3005` / `relation "User" already exists` es base creada con `db push`, baselinear una vez con `npx prisma migrate resolve --applied 20260810000000_init` |
+| El panel no carga pero la API responde | El dominio esta apuntando al puerto 3000 (Express) en vez del 80 (nginx). nginx es el que sirve el `dist/` de la SPA y hace proxy de `/api` y `/socket.io` |
+| Las capturas desaparecen despues de un redeploy | En el despliegue tipo "Docker" montarle un volumen en `/app/uploads/screenshots`; la imagen solo hace `mkdir`, el volumen named existe nada mas en `docker-compose.dokploy.yml` |
 | Las capturas salen rotas / en negro | Ahora se piden autenticadas (`/api/screenshots/:id/image`). Revisar que el token no haya expirado y que el rol tenga `SCREENSHOTS_VIEW`; `nginx` ya no sirve `/uploads` |
 | Tras cambiar la contrasena del admin vuelve la vieja | No deberia pasar: el seed solo crea el usuario la primera vez y nunca reescribe `passwordHash`. Si la base la creo el seed viejo, rotala desde el panel una vez |
 | CORS error | Verificar `CORS_ORIGIN` coincide con el dominio real |

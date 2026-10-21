@@ -36,6 +36,11 @@ RUN mkdir -p /app/uploads/screenshots
 
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# Validar la config en el build. Sin esto, una directiva mal escrita (o un map fuera de contexto)
+# recién se ve en produccion: nginx falla con [emerg], el CMD encadenado con && muere con el PID 1
+# y el contenedor entra en crash-loop con 502 en todo el dominio.
+RUN nginx -t
+
 EXPOSE 80 3000
 
 # migrate deploy (no "db push"): db push altera el esquema sin dejar registro en
