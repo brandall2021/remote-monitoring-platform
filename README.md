@@ -27,13 +27,13 @@ Interfaz en espanol (footer `softgroup.com.ar`). Incluye capturas de pantalla ba
 │  │  PostgreSQL 16  │        │  App Custom (server + client)      │  │
 │  │ (servicio Dok) │        │  ┌───────────────────────────────┐  │  │
 │  │     5432       │        │  │  nginx (80) → SPA React        │  │  │
-│  └───────┬────────┘        │  │   ├─ /api ──────────────┐      │  │  │
-│          │                 │  │   ├─ /socket.io ──────┐ │      │  │  │
-│  ┌───────┴────────┐        │  │   └─ /uploads ──────┐ │ │      │  │  │
-│  │    Redis 7      │        │  │                     ▼ ▼ ▼     │  │  │
-│  │ (servicio Dok) │        │  │  Node.js + Express + Socket.IO  │  │  │
-│  │     6379       │        │  │  (3000) · Prisma db push + seed │  │  │
-│  └───────┬────────┘        │  └───────────────────────────────┘  │  │
+│  └───────┬────────┘        │  │   ├─ /api ───────────────┐    │  │  │
+│          │                 │  │   └─ /socket.io ────────┐│    │  │  │
+│  ┌───────┴────────┐        │  │                         ▼▼    │  │  │
+│  │    Redis 7      │        │  │  Node.js + Express + Socket.IO  │  │  │
+│  │ (servicio Dok) │        │  │  (3000) · migrate deploy + seed │  │  │
+│  │     6379       │        │  └───────────────────────────────┘  │  │
+│  └───────┬────────┘        │                                      │  │  │
 │          │                 │                                      │  │
 └──────────┼─────────────────┼──────────────────────────────────────┘
            │                 │ HTTPS
@@ -49,7 +49,9 @@ Interfaz en espanol (footer `softgroup.com.ar`). Incluye capturas de pantalla ba
 
 > El server y el client viven en UNA sola imagen: el `Dockerfile` de la raiz
 > construye ambos y el contenedor corre nginx (:80) sirviendo el frontend y
-> proxyeando `/api`, `/socket.io` y `/uploads` a la API Node.js (:3000).
+> proxyeando `/api` y `/socket.io` a la API Node.js (:3000).
+> `/uploads` **ya no existe**: las capturas se piden con `GET /api/screenshots/:id/image`,
+> que valida el JWT y el permiso `SCREENSHOTS_VIEW` antes de leer el archivo del disco.
 > PostgreSQL y Redis son servicios independientes de Dokploy.
 > En el despliegue actual la app se llama `sistema-monitot-cxsbui`.
 
@@ -95,14 +97,18 @@ Crear servicios one-click y anotar host interno, usuario y contrasena (ej: `post
 
 ### Paso 4: Variables de Entorno
 
+Los tres secretos son **obligatorios**: si faltan (o si dejan un valor de ejemplo), el server
+se niega a arrancar en produccion. Genera cada uno con `openssl rand -hex 32`.
+
 ```env
 # === BASE DE DATOS (servicio PostgreSQL de Dokploy) ===
 DATABASE_URL=postgresql://postgres:tu-contrasena@postgres.xxx.docker.internal:5432/remote_monitoring
 
 # === REDIS (servicio Redis de Dokploy) ===
+# Reservado para el adapter de socket.io multi-instancia; hoy el server no lo usa.
 REDIS_URL=redis://redis.xxx.docker.internal:6379
 
-# === JWT ===
+# === JWT (obligatorios, min 32 chars) ===
 JWT_SECRET=tu-jwt-secret-min-32-chars
 JWT_REFRESH_SECRET=tu-jwt-refresh-secret-min-32-chars
 JWT_EXPIRES_IN=15m
@@ -113,6 +119,25 @@ CORS_ORIGIN=https://monitor.recuperocrediticio.com
 
 # === AGENTE (token para registro de agentes) ===
 AGENT_REGISTRATION_TOKEN=tu-agent-registration-token
+
+# === COOKIES (el refresh token viaja en una cookie HttpOnly) ===
+# Detras de HTTPS de Dokploy, dejar secure=true y sameSite=lax.
+COOKIE_SECURE=true
+COOKIE_SAME_SITE=lax
+
+# === PROXY ===
+# nginx de este mismo contenedor: 1 salto. Sin esto el rate-limit de login se comparte
+# entre todos los usuarios y la IP de la auditoria sale 127.0.0.1.
+TRUST_PROXY_HOPS=1
+
+# === BOOTSTRAP DEL SUPER_ADMIN (opcional) ===
+# Si se omite, el seed genera una contrasena aleatoria y la imprime UNA sola vez en el log
+# del primer arranque. Si se define, debe tener 12+ caracteres.
+SEED_ADMIN_PASSWORD=
+
+# === COTAS (opcional) ===
+MAX_SCREENSHOT_BYTES=12582912
+WS_MAX_BUFFER_BYTES=16777216
 ```
 
 ### Paso 5: Configurar Dominio (SSL)
@@ -122,10 +147,25 @@ En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com
 ### Paso 6: Verificar Deploy
 
 - Abrir `https://<tu-dominio>` y loguearse.
-- Credenciales por defecto: **`admin@monitoring.local` / `admin123`**.
+- La contrasena del `SUPER_ADMIN` sale del log del **primer** arranque: si definiste
+  `SEED_ADMIN_PASSWORD` es esa, y si no, el seed genera una aleatoria y la imprime una sola vez
+  (`docker logs <contenedor>`, buscar `CONTRASEÑA INICIAL DEL SUPERADMIN`).
+- Si la base ya tiene usuario, el seed **no toca la contrasena**: cambia lo que cambie en el deploy,
+  la credencial que pusiste sigue vigente. (Aun se aplica el `admin123` historico si la base la creo
+  el seed viejo: rotarla desde el panel una vez.)
 
-> El CMD del contenedor ejecuta en cada arranque: `nginx && npx prisma db push && node dist/prisma/seed.js && node dist/server.js`.
-> El seed es **idempotente**: crea los 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin, y **resetea la contrasena de `admin@monitoring.local` a `admin123` en cada boot** (si la cambias en el panel, se revierte en el proximo deploy).
+> El CMD del contenedor ejecuta en cada arranque: `nginx && npx prisma migrate deploy && node dist/prisma/seed.js && node dist/server.js`.
+> El seed crea los 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin solo la primera
+> vez; en los arranques siguientes reconcilia nombre y apellido, nunca `passwordHash`.
+>
+> `migrate deploy` requiere la tabla `_prisma_migrations`. Si tu base se armo con `prisma db push`,
+> hacele un baseline una sola vez:
+> `docker exec -it <contenedor> npx prisma migrate resolve --applied 20260810000000_init`
+
+> **Este deploy desconecta las sesiones abiertas.** Los refresh tokens ahora se guardan como
+> digesto SHA-256; los renglones viejos (en claro) ya no matchean y cada usuario vuelve a loguearse
+> una vez. Aproveá el momento para limpiarlos (desde el `psql` del servicio PostgreSQL de Dokploy,
+> o desde Prisma Studio): `TRUNCATE refresh_tokens;`
 
 ---
 
@@ -134,15 +174,25 @@ En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com
 | Variable | Requerida | Descripcion | Valor por defecto |
 |----------|:---------:|-------------|-------------------|
 | `DATABASE_URL` | Si | Cadena de conexion PostgreSQL (servicio Dokploy) | - |
-| `REDIS_URL` | Si | Cadena de conexion Redis (servicio Dokploy) | `redis://localhost:6379` |
-| `JWT_SECRET` | Si | Secret para firmar JWT (min 32 chars) | - |
-| `JWT_REFRESH_SECRET` | Si | Secret para refresh tokens (min 32 chars) | - |
+| `REDIS_URL` | No | Cadena de conexion Redis. Hoy el server no la usa; hace falta si corras mas de una replica e instales `@socket.io/redis-adapter` | `redis://localhost:6379` |
+| `JWT_SECRET` | Si | Secret para firmar JWT (min 32 chars). Sin valor o con valor de ejemplo, el server **no arranca** en produccion | - |
+| `JWT_REFRESH_SECRET` | Si | Secret para refresh tokens (min 32 chars), tiene que ser distinto del anterior | - |
+| `NODE_ENV` | No | `production` activa el fail-fast de secretos y la cookie `Secure`. | `development` |
 | `JWT_EXPIRES_IN` | No | Tiempo de vida del access token | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | No | Tiempo de vida del refresh token | `7d` |
 | `CORS_ORIGIN` | Si | Dominio permitido para CORS | - |
-| `AGENT_REGISTRATION_TOKEN` | Si | Token para registro de agentes | - |
+| `AGENT_REGISTRATION_TOKEN` | Si | Token compartido de onboarding de agentes (min 16 chars) | - |
+| `SEED_ADMIN_PASSWORD` | No | Contrasena inicial del SUPER_ADMIN (min 12 chars). Vacia = generada y printada una vez | aleatoria |
+| `COOKIE_SECURE` | No | `Secure` en la cookie del refresh token. `true` detras de HTTPS | `true` en produccion |
+| `COOKIE_SAME_SITE` | No | `lax` / `strict` / `none` de la cookie del refresh token | `lax` |
+| `REFRESH_COOKIE_NAME` | No | Nombre de la cookie del refresh token | `rm_refresh` |
+| `TRUST_PROXY_HOPS` | No | Cuantos proxies hay delante de Express. Determina `req.ip` y los rate limits por IP | `1` |
 | `PORT` | No | Puerto de la API dentro del contenedor | `3000` |
 | `SCREENSHOTS_DIR` | No | Directorio de capturas de pantalla | `./uploads/screenshots` |
+| `MAX_SCREENSHOT_BYTES` | No | Cota de bytes por captura que acepta el WebSocket | `12582912` (12 MB) |
+| `WS_MAX_BUFFER_BYTES` | No | Mensaje maximo de socket.io (frame de live view) | `16777216` (16 MB) |
+| `DEVICE_OFFLINE_AFTER_MS` | No | Sin heartbeat por ese tiempo, el equipo pasa a OFFLINE | `180000` |
+| `WS_PING_INTERVAL_MS` / `WS_PING_TIMEOUT_MS` | No | Keepalive del canal de agentes | `10000` / `5000` |
 
 ---
 
@@ -157,10 +207,12 @@ npm run build          # compila a dist/agent.js
 npm run package        # empaqueta agent.exe con pkg (node18-win-x64)
 ```
 
-> El repositorio ya incluye un binario pre-compilado **`agent/agent-live.exe`**
-> con soporte de vista en vivo y frames JPEG comprimidos. Si lo regeneras,
-> se actualiza con `npm run package` (cambia el output a `agent-live.exe` si
-> el `agent.exe` anterior esta corriendo y bloqueado).
+> El repositorio ya incluye los binarios pre-compilados **`agent/agent-live.exe`**
+> (agente, con vista en vivo y frames JPEG comprimidos) y **`agent/tray/RmTray.exe`**
+> (el icono de bandeja). Si regeneras el agente, se actualiza con `npm run package`
+> (cambia el output a `agent-live.exe` si el `agent.exe` anterior esta corriendo y
+> bloqueado). La bandeja se recompila con `npm run build:tray` (usa el `csc.exe` de
+> .NET Framework 4 que viene con Windows; no agrega dependencias al `pkg`).
 
 ### Configuracion del agente
 
@@ -169,11 +221,23 @@ npm run package        # empaqueta agent.exe con pkg (node18-win-x64)
 - Si no existe ninguna config, el agente se registra usando las variables `SERVER_URL` y `REGISTRATION_TOKEN`.
 - `registrationToken` guardado es un **token unico por dispositivo** emitido por el server al registrarse (el token compartido de onboarding solo se usa para el alta).
 
+### Icono de bandeja
+
+El agente muestra un punto de color en la bandeja del usuario: **verde** conectado,
+**naranja** iniciando, **rojo** sin conexion, **gris** detenido. El menu del icono
+dice equipo, ID, servidor, ultimo latido y ultimo error, y ofrece abrir el panel o
+refrescar. Es el aviso visible del monitoreo, no un control: **no tiene boton de
+salir ni de pausar**, y cerrarlo no baja el agente. El estado sale de
+`%LOCALAPPDATA%\RemoteMonitoringAgent\status.json` (o `%ProgramData%`), un archivo
+que el agente escribe con una allowlist de campos y que nunca contiene el token de
+registro. El detalle completo esta en
+[`agent/README.md`](agent/README.md#icono-de-bandeja-lo-que-ve-el-empleado).
+
 ### Distribucion
 
 #### Opcion 1: Ejecutable + instalador (recomendado)
 
-El instalador copia el exe a `%LOCALAPPDATA%\RemoteMonitoringAgent\`, registra una **tarea programada al iniciar sesion** (corre oculto via `run-hidden.vbs`) y arranca el agente:
+El instalador copia el exe y la bandeja a `%LOCALAPPDATA%\RemoteMonitoringAgent\`, registra una **tarea programada al iniciar sesion** que corre `RmTray.exe` (sin consola; la bandeja levanta y vigila al agente) y arranca el icono:
 
 ```powershell
 # PC nueva (pide SERVER_URL y REGISTRATION_TOKEN si no hay config)
@@ -198,14 +262,21 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall.ps1
 Para muchos equipos se usa **`agent/installer/install-silent.ps1`**, disenado para
 correr en contexto **SYSTEM** (Session 0, sin interaccion). Hace todo en un paso:
 
-1. Copia `agent-live.exe` a `C:\Program Files\RemoteMonitoringAgent\agent.exe`.
+1. Copia `agent-live.exe` a `C:\Program Files\RemoteMonitoringAgent\agent.exe` y
+   `RmTray.exe` en la misma carpeta.
 2. **Pre-registra el equipo** contra el server (genera su `deviceId` unico) y
    escribe la config a nivel maquina en `%ProgramData%\RemoteMonitoringAgent\agent.json`.
 3. Registra la tarea programada **`RemoteMonitoringAgent` al logon de CUALQUIER
-   usuario** (sesion interactiva, via `run-hidden.vbs`) — asi cada usuario que
-   inicie sesion levanta el agente con el mismo `deviceId` de la PC.
-4. Otorga a `Users` escritura sobre la carpeta de config (para re-registrar si
-   la config se pierde).
+   usuario** (sesion interactiva), que corre la bandeja y desde ella el agente — asi
+   cada usuario que inicie sesion levanta el agente con el mismo `deviceId` de la PC.
+   Con `-Session0` la tarea del agente es al arranque de Windows como SYSTEM y la
+   bandeja queda en una tarea aparte, `RemoteMonitoringAgent-Tray`, con `--status-only`.
+4. Asegura la carpeta de config con ACLs: `SYSTEM` y `Administradores` control
+   total, herencia de permisos removida. En modo logon `Users` queda **solo
+   lectura** (el agente debe poder leer el bootstrap como usuario interactivo);
+   en Session 0 `Users` no tiene acceso. El script avisa por log cuando la
+   config puede ser leida por otros usuarios locales. `status.json`, el archivo
+   que lee la bandeja, vive en el perfil del usuario y no lleva credenciales.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installer\install-silent.ps1 `
@@ -223,7 +294,7 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 **Empaquetado por herramienta:**
 
 - **PDQ Deploy:** package = `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...`, corriendo como SYSTEM/dominio. Para update, usar un nuevo package o re-ejecutar el mismo.
-- **Intune (Win32 app):** empaquetar `install-silent.ps1` + `agent-live.exe` (+ `run-hidden.vbs` se genera solo) con *Microsoft Win32 Content Prep Tool*. Comando de instalacion: `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...` (corre como SYSTEM). Regla de deteccion: archivo `C:\Program Files\RemoteMonitoringAgent\agent.exe` existe. Uninstall: `powershell.exe -ExecutionPolicy Bypass -File "uninstall-silent.ps1"`.
+- **Intune (Win32 app):** empaquetar `install-silent.ps1` + `agent-live.exe` + `tray\RmTray.exe` con *Microsoft Win32 Content Prep Tool*. Comando de instalacion: `powershell.exe -ExecutionPolicy Bypass -File "install-silent.ps1" -ServerUrl ... -RegistrationToken ...` (corre como SYSTEM). Regla de deteccion: archivo `C:\Program Files\RemoteMonitoringAgent\agent.exe` existe. Uninstall: `powershell.exe -ExecutionPolicy Bypass -File "uninstall-silent.ps1"`.
 - **SCCM:** Deployment Type PowerShell (Instalar/Desinstalar apuntando a ambos scripts).
 
 #### Opcion 2: Ejecutable suelto
@@ -305,20 +376,29 @@ remote-monitoring-platform/
 │   │   ├── commands.ts        # Ejecucion de comandos y captura de frames
 │   │   ├── config.ts          # Configuracion local
 │   │   ├── imageSize.ts       # Parser de cabeceras PNG/JPEG
+│   │   ├── agentStatus.ts     # status.json para la bandeja (allowlist, sin token)
 │   │   ├── role.ts            # Rol: standalone | supervisor | session
-│   │   ├── sessionProtocol.ts # Framing binario del named pipe
+│   │   ├── sessionProtocol.ts # Framing binario del named pipe (+ hello de admision + push de estado)
+│   │   ├── sessionSecret.ts   # Secreto por arranque: generacion y comparacion constant-time
 │   │   ├── sessionSupervisor.ts / sessionWorker.ts / sessionBridge.ts
 │   │   └── screenshot-desktop.d.ts
+│   ├── tray/
+│   │   ├── RmTray.cs          # Bandeja: NotifyIcon + menu informativo + watchdog del agente
+│   │   └── RmTray.exe         # Binario (csc, .NET Framework 4)
 │   ├── installer/             # Instaladores (tarea al iniciar sesion, o Session 0 con -Session0)
 │   │   ├── install.ps1            # Interactivo (PC individual)
 │   │   ├── uninstall.ps1
 │   │   ├── install-silent.ps1     # Silencioso para PDQ/Intune/SCCM (contexto SYSTEM)
 │   │   ├── start-session.ps1      # Bridge Session 0 -> sesion interactiva
 │   │   ├── uninstall-silent.ps1
-│   │   └── run-hidden.vbs
+│   │   ├── build-tray.ps1         # Compila RmTray.exe
+│   │   ├── build-installer.ps1    # Compila la bandeja + RemoteMonitoringAgent.iss -> Setup.exe
+│   │   ├── RemoteMonitoringAgent.iss  # Instalador grafico (aviso al usuario incluido)
+│   │   └── run-hidden.vbs         # Legado: ya no se usa, los instaladores lo borran
 │   ├── agent-live.exe         # Binario pre-compilado (vista en vivo + JPEG)
 │   └── package.json
 │
+├── RemoteMonitoringAgentSetup.exe  # Instalador grafico compilado (Inno Setup 6)
 ├── Dockerfile                 # Dockerfile raiz (Custom App Dokploy: server+client en una imagen)
 ├── nginx.conf                 # Config de nginx de la imagen unica (proxy a 127.0.0.1:3000)
 ├── .gitignore
@@ -374,9 +454,10 @@ remote-monitoring-platform/
 |--------|----------|---------|-------------|
 | `GET` | `/api/screenshots` | `SCREENSHOTS_VIEW` | Listar capturas |
 | `GET` | `/api/screenshots/device/:deviceId` | `SCREENSHOTS_VIEW` | Capturas de un equipo |
-| `GET` | `/api/screenshots/:id` | `SCREENSHOTS_VIEW` | Ver captura |
+| `GET` | `/api/screenshots/:id` | `SCREENSHOTS_VIEW` | Metadatos de la captura (sin `filePath`) |
+| `GET` | `/api/screenshots/:id/image` | `SCREENSHOTS_VIEW` | Bytes de la imagen (unico camino; reemplaza al viejo `/uploads` publico) |
 | `POST` | `/api/screenshots/request` | `SCREENSHOTS_REQUEST` | Solicitar captura |
-| `DELETE` | `/api/screenshots/:id` | `SCREENSHOTS_VIEW` | Eliminar captura |
+| `DELETE` | `/api/screenshots/:id` | `SCREENSHOTS_REQUEST` | Eliminar captura |
 
 ### Auditoria y Health
 
@@ -408,16 +489,60 @@ remote-monitoring-platform/
 
 ## Seguridad
 
-- **JWT + Refresh Tokens** para autenticacion stateless.
-- **RBAC** con 3 niveles (SUPER_ADMIN, ADMIN, OPERATOR).
-- **Rate limiting** en endpoints sensibles (login, general).
-- **Helmet** para headers de seguridad HTTP.
-- **CORS** configurado por dominio (`CORS_ORIGIN`).
-- **Auditoria completa** de acciones de usuarios.
-- **Token unico de registro** por agente (`AGENT_REGISTRATION_TOKEN`).
-- **Heartbeat** periodicos para detectar desconexiones y marcar OFFLINE.
-- **HTTPS** obligatorio via Dokploy/Let's Encrypt.
+**Autenticacion y sesion**
+
+- **JWT + Refresh Tokens** para autenticacion stateless (access 15 min en memoria del navegador,
+  refresh 7 dias guardado en la base **hasheado** (SHA-256), nunca en claro).
+- El refresh token viaja en una **cookie `HttpOnly` + `SameSite=Lax` + `Secure` + `Path=/api/auth`**:
+  un XSS ya no puede exportar la sesion de 7 dias ni mandarla a un origen ajeno.
+- **Fail-fast de secretos**: sin `JWT_SECRET`, `JWT_REFRESH_SECRET` o `AGENT_REGISTRATION_TOKEN`
+  (o con valores de ejemplo) el server no arranca en produccion.
+- **Rate limiting** separado para login (10 intentos fallidos / 15 min) y general (300 / 15 min),
+  con `trust proxy` para que el contador sea por usuario y no por el proxy comun.
+
+**Autorizacion**
+
+- **RBAC** con 3 niveles (SUPER_ADMIN, ADMIN, OPERATOR) y una sola fuente de verdad
+  (`ROLE_PERMISSIONS`), aplicada en HTTP **y** en WebSocket.
+- **Anti-escalada**: un rol solo puede asignar o gestionar roles de rango estrictamente inferior;
+  `USERS_WRITE` de un ADMIN ya no le permite crear SUPER_ADMIN ni resetearle la contrasena a uno.
+- **Allowlist de comandos** en el canal de agentes: cada tipo de comando se valida contra la
+  permission del admin que lo dispara y contra una lista de tipos conocidos.
+- Las **capturas** se sirven solo por `GET /api/screenshots/:id/image`, con JWT + `SCREENSHOTS_VIEW`
+  y validando que la ruta resuelta quede dentro de `SCREENSHOTS_DIR` (sin traversal). El viejo
+  `express.static` publico de `/uploads/screenshots`, que se montaba antes que las rutas de API,
+  fue eliminado.
+
+**Transporte y agentes**
+
+- **Token unico de registro por agente** (`AGENT_REGISTRATION_TOKEN` solo para el alta) y
+  `registrationToken` que **no se devuelve** en los listados/detalle de equipos.
+- **Heartbeat** periodico; sin 3 latidos el equipo pasa a OFFLINE.
+- **Cotas de payload** por mensaje de WebSocket y por captura; deteccion de imagen por magic bytes,
+  no por la extension.
 - Los frames de la vista en vivo viajan por WebSocket (WSS) y no se persisten en el server.
+- **Canal local supervisor ↔ worker**: la named pipe acepta conexiones solo despues de un frame
+  `hello` con el secreto aleatorio de ese arranque (256 bits, inyectado por el bloque de entorno de
+  `CreateProcessAsUser`, nunca por la linea de comandos) y comparado en tiempo constante.
+- **ACLs del config del agente**: herencia removida; `SYSTEM` + `Administradores` control total y
+  `Users` solo lectura (o sin acceso en Session 0).
+
+**Aviso al usuario**
+
+- El agente muestra un **icono en la bandeja** del usuario con el estado del monitoreo (verde/naranja/
+  rojo/gris, equipo, ID, ultimo latido). El menu es **solo informativo**: no hay boton para pausar ni
+  apagar, y cerrarlo no baja el agente.
+- El estado sale de `status.json`, escrito con una **allowlist de campos** que no incluye el
+  `registrationToken`; hay tests que lo verifican. En Session 0 el estado viaja por la pipe ya
+  autenticada y lo persiste el worker (el supervisor no puede escribir el perfil del usuario).
+- El instalador grafico muestra una **pantalla de aviso** con que se instala y como se quita.
+  Queda pendiente completar el aviso de la Ley 25.326 (responsable del dato y politica de privacidad)
+  antes de desplegar en produccion.
+
+**Auditoria**
+
+- **Auditoria completa** de acciones de usuarios y de comandos rechazados por WebSocket, con `req.ip`
+  real y sin tokens en el payload.
 
 ---
 
@@ -429,11 +554,14 @@ remote-monitoring-platform/
 | Agent aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
 | Screenshot falla | Agente debe correr en la sesion interactiva del usuario (no como servicio) |
 | Vista en vivo no muestra frames | El agente debe ser el build con soporte `live-command` (`agent-live.exe`) |
+| El empleado no ve el icono de bandeja | Verificar la tarea `RemoteMonitoringAgent` (modo logon) o `RemoteMonitoringAgent-Tray` (modo Session 0) y que `RmTray.exe` este en la carpeta de instalacion. El detalle del estado esta en `%LOCALAPPDATA%\RemoteMonitoringAgent\status.json` |
 | Video grabado corto | Solo aplicaba a builds previos al fix del "pump" de redibujado (commit `0e3b93d`) |
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |
+| El contenedor no arranca: `JWT_SECRET no está definido` | Fail-fast intencional. Definir `JWT_SECRET`, `JWT_REFRESH_SECRET` y `AGENT_REGISTRATION_TOKEN` (`openssl rand -hex 32`); los valores de ejemplo (`change-this`, `secret`) tambien se rechazan |
+| Las capturas salen rotas / en negro | Ahora se piden autenticadas (`/api/screenshots/:id/image`). Revisar que el token no haya expirado y que el rol tenga `SCREENSHOTS_VIEW`; `nginx` ya no sirve `/uploads` |
+| Tras cambiar la contrasena del admin vuelve la vieja | No deberia pasar: el seed solo crea el usuario la primera vez y nunca reescribe `passwordHash`. Si la base la creo el seed viejo, rotala desde el panel una vez |
 | CORS error | Verificar `CORS_ORIGIN` coincide con el dominio real |
 | DB connection fail | Verificar `DATABASE_URL` y que PostgreSQL este corriendo |
-| La contrasena admin se revierte | Es el comportamiento del seed: la resetea a `admin123` en cada deploy |
 
 ---
 
@@ -447,13 +575,26 @@ cd remote-monitoring-platform
 docker-compose up -d postgres redis
 
 # Server
-cd server && npm install && npx prisma migrate dev && npm run dev
+cd server
+cp .env.example .env        # completá DATABASE_URL y los 3 secretos obligatorios
+npx prisma migrate dev
+npm run seed                # imprime la contrasena del SUPER_ADMIN una sola vez
+npm run dev
 
 # Client (en otra terminal)
 cd ../client && npm install && npm run dev
+
+# Tests
+cd ../server && npm test    # jest: permisos, RBAC HTTP/WS, servicios, seed, app real
+cd ../agent  && npm test    # vitest: protocolo, pipe, comandos, imagenes
 ```
 
 El client estara disponible en `http://localhost:5173` y el server en `http://localhost:3000`.
+
+> Si en desarrollo no definis `JWT_SECRET` / `JWT_REFRESH_SECRET` / `AGENT_REGISTRATION_TOKEN`,
+> el server levanta con secretos **efimeros** (se regeneran por proceso: los tokens y los registros
+> de agente no sobreviven a un restart) y avisa por consola. En produccion esa misma situacion es
+> un arranque que falla.
 
 ---
 
