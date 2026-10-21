@@ -1,31 +1,40 @@
 import axios from "axios";
+import { getAccessToken, setAccessToken, clearAccessToken } from "./tokenStore";
 
 const API_BASE = "/api";
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
+  // Necesario para que la cookie HttpOnly del refresh token viaje en las llamadas a /api/auth/*.
+  withCredentials: true,
 });
 
-let isRefreshing = false;
-let failedQueue: Array<{
-  resolve: (value: unknown) => void;
-  reject: (reason?: unknown) => void;
-}> = [];
+let refreshing: Promise<string | null> | null = null;
 
-const processQueue = (error: unknown, token: string | null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
-    }
-  });
-  failedQueue = [];
-};
+// Una sola renovación en vuelo: si cinco requests devuelven 401 al mismo tiempo, las cinco esperan
+// el mismo refresh en lugar de rotar el token cinco veces (la rotación invalida el anterior).
+async function refreshSession(): Promise<string | null> {
+  if (!refreshing) {
+    refreshing = axios
+      .post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true })
+      .then(({ data }) => {
+        setAccessToken(data.accessToken);
+        return data.accessToken as string;
+      })
+      .catch(() => {
+        clearAccessToken();
+        return null;
+      })
+      .finally(() => {
+        refreshing = null;
+      });
+  }
+  return refreshing;
+}
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("accessToken");
+  const token = getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -37,51 +46,21 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        })
-          .then((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
-            return api(originalRequest);
-          })
-          .catch((err) => Promise.reject(err));
-      }
-
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
-      isRefreshing = true;
-
-      const refreshToken = localStorage.getItem("refreshToken");
-      if (!refreshToken) {
-        isRefreshing = false;
-        localStorage.removeItem("accessToken");
+      const token = await refreshSession();
+      if (!token) {
         window.location.href = "/login";
         return Promise.reject(error);
       }
-
-      try {
-        const { data } = await axios.post(`${API_BASE}/auth/refresh`, {
-          refreshToken,
-        });
-        localStorage.setItem("accessToken", data.accessToken);
-        localStorage.setItem("refreshToken", data.refreshToken);
-        processQueue(null, data.accessToken);
-        originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
-        return api(originalRequest);
-      } catch (refreshError) {
-        processQueue(refreshError, null);
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-        window.location.href = "/login";
-        return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
-      }
+      originalRequest.headers.Authorization = `Bearer ${token}`;
+      return api(originalRequest);
     }
     return Promise.reject(error);
   }
 );
+
+export { refreshSession, getAccessToken, setAccessToken, clearAccessToken };
 
 export interface User {
   id: string;
@@ -95,7 +74,6 @@ export interface User {
 
 export interface LoginResponse {
   accessToken: string;
-  refreshToken: string;
   user: User;
 }
 
@@ -138,7 +116,7 @@ export interface Command {
 export interface Screenshot {
   id: string;
   deviceId: string;
-  filePath: string;
+  // filePath ya no viaja en la API: la ruta absoluta del servidor se reemplazó por GET /api/screenshots/:id/image.
   fileSize?: number;
   mimeType: string;
   width?: number;
@@ -163,11 +141,12 @@ export interface AuditLog {
 export const authAPI = {
   login: (email: string, password: string) =>
     api.post<LoginResponse>("/auth/login", { email, password }),
-  refresh: (refreshToken: string) =>
-    api.post<{ accessToken: string; refreshToken: string }>("/auth/refresh", { refreshToken }),
-  logout: (refreshToken: string) =>
-    api.post("/auth/logout", { refreshToken }),
+  // El server rota el refresh token y lo escribe como cookie HttpOnly; el cuerpo ya no lo trae.
+  refresh: () => api.post<{ accessToken: string }>("/auth/refresh"),
+  logout: () => api.post("/auth/logout"),
   profile: () => api.get<User>("/auth/profile"),
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    api.post("/users/me/password", { currentPassword, newPassword }),
 };
 
 export const usersAPI = {
@@ -212,6 +191,12 @@ export const screenshotsAPI = {
     api.get<{ screenshots: Screenshot[]; total: number }>(`/screenshots/device/${deviceId}?page=${page}&limit=${limit}`),
   request: (deviceId: string, reason?: string) =>
     api.post<Command>("/screenshots/request", { deviceId, reason }),
+  // El binario ya no se sirve por /uploads/screenshots (monte estático público). Se pide por id y
+  // el server valida JWT + SCREENSHOTS_VIEW; devuelve un Blob porque un <img src> no manda header.
+  imageBlob: async (id: string) => {
+    const res = await api.get(`/screenshots/${id}/image`, { responseType: "blob" });
+    return res.data as Blob;
+  },
   delete: (id: string) => api.delete(`/screenshots/${id}`),
 };
 

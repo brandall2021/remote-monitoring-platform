@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 
 const SALT_ROUNDS = 12;
 
@@ -13,12 +14,13 @@ export async function comparePassword(
   return bcrypt.compare(password, hash);
 }
 
-export function generateToken(length: number = 64): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+// Math.random() no es CSPRNG: el PRNG de V8 se recupera con unas pocas observaciones, y estos
+// tokens se usaban para enlaces de restablecimiento de contraseña. randomBytes además evita el
+// sesgo de módulo que tenía la versión con charAt().
+export function generateToken(bytes: number = 32): string {
+  if (!Number.isInteger(bytes) || bytes < 16 || bytes > 128) {
+    throw new Error("generateToken: bytes debe estar entre 16 y 128");
   }
-  return result;
+  return crypto.randomBytes(bytes).toString("base64url");
 }
+

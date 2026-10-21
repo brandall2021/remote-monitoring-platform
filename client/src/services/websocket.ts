@@ -1,12 +1,17 @@
 import { io, Socket } from "socket.io-client";
+import { getAccessToken } from "./tokenStore";
 
 let adminSocket: Socket | null = null;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
-export function getAdminSocket(token: string): Socket {
+// `auth` como callback: socket.io lo evalúa en CADA conexión, incluidas las reconexiones
+// automáticas. Con el token fijado en el objeto de opciones, un reconnect después de un refresh
+// usaba el JWT viejo (15 min) y el server rechazaba el handshake.
+export function getAdminSocket(): Socket {
   if (!adminSocket) {
     adminSocket = io("/admin", {
-      auth: { token },
+      auth: (cb: (p: Record<string, unknown>) => void) =>
+        cb({ token: getAccessToken() ?? "" }),
       transports: ["websocket"],
       reconnection: true,
       reconnectionDelay: 1000,
@@ -14,13 +19,9 @@ export function getAdminSocket(token: string): Socket {
       reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
     });
 
-    adminSocket.on("reconnect_attempt", (_attempt: number) => {
-    });
-
-    adminSocket.on("reconnect", () => {
-    });
+    adminSocket.on("reconnect_attempt", (_attempt: number) => {});
+    adminSocket.on("reconnect", () => {});
   } else if (adminSocket.disconnected) {
-    adminSocket.auth = { token };
     adminSocket.connect();
   }
 

@@ -1,12 +1,13 @@
 import prisma from "../config/database";
-import { hashPassword, comparePassword, generateToken } from "../security/password";
+import { comparePassword } from "../security/password";
+import { hashToken } from "../security/tokens";
 import {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
 } from "../security/jwt";
 import { Role, JwtPayload } from "../types";
-import { config } from "../config";
+import { unauthorized } from "../lib/errors";
 
 export class AuthService {
   async login(email: string, password: string, ip: string, userAgent: string) {
@@ -16,12 +17,12 @@ export class AuthService {
     });
 
     if (!user || !user.isActive) {
-      throw new Error("Invalid credentials");
+      throw unauthorized("Credenciales inválidas");
     }
 
     const isValid = await comparePassword(password, user.passwordHash);
     if (!isValid) {
-      throw new Error("Invalid credentials");
+      throw unauthorized("Credenciales inválidas");
     }
 
     await prisma.user.update({
@@ -43,7 +44,7 @@ export class AuthService {
 
     await prisma.refreshToken.create({
       data: {
-        token: refreshToken,
+        token: hashToken(refreshToken),
         userId: user.id,
         expiresAt: refreshExpiresAt,
       },
@@ -77,12 +78,16 @@ export class AuthService {
     try {
       const payload = verifyRefreshToken(refreshToken);
 
+      // Se busca por digesto, no por el token en claro. Las filas anteriores a este cambio están
+      // en claro y este lookup ya no las encuentra, así que esas sesiones caen al primer refresh:
+      // conviene vaciar la tabla en el deploy (`TRUNCATE refresh_tokens;`) porque de todas formas
+      // son tokens de sesión expuestos.
       const storedToken = await prisma.refreshToken.findUnique({
-        where: { token: refreshToken },
+        where: { token: hashToken(refreshToken) },
       });
 
       if (!storedToken || storedToken.expiresAt < new Date()) {
-        throw new Error("Invalid refresh token");
+        throw unauthorized("Token de sesión no válido");
       }
 
       const user = await prisma.user.findUnique({
@@ -91,7 +96,7 @@ export class AuthService {
       });
 
       if (!user || !user.isActive) {
-        throw new Error("User not found or inactive");
+        throw unauthorized("Sesión no válida");
       }
 
       const newPayload: JwtPayload = {
@@ -112,7 +117,7 @@ export class AuthService {
 
       await prisma.refreshToken.create({
         data: {
-          token: newRefreshToken,
+          token: hashToken(newRefreshToken),
           userId: user.id,
           expiresAt: refreshExpiresAt,
         },
@@ -123,13 +128,13 @@ export class AuthService {
         refreshToken: newRefreshToken,
       };
     } catch (error) {
-      throw new Error("Invalid refresh token");
+      throw unauthorized("Token de sesión no válido");
     }
   }
 
   async logout(refreshToken: string) {
     await prisma.refreshToken.deleteMany({
-      where: { token: refreshToken },
+      where: { token: hashToken(refreshToken) },
     });
   }
 

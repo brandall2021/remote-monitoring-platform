@@ -1,96 +1,78 @@
 import { Response } from "express";
-import { userService } from "../services/user.service";
+import { userService, Actor } from "../services/user.service";
 import { AuthRequest } from "../middleware/auth";
+import { asyncHandler, unauthorized } from "../lib/errors";
+import { parsePagination } from "../middleware/pagination";
 import { z } from "zod";
 
 const createUserSchema = z.object({
   email: z.string().email(),
   username: z.string().min(3).max(30),
-  password: z.string().min(8),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  password: z.string().min(8).max(128),
+  firstName: z.string().min(1).max(60),
+  lastName: z.string().min(1).max(60),
   role: z.enum(["SUPER_ADMIN", "ADMIN", "OPERATOR"]),
 });
 
-const updateUserSchema = z.object({
-  email: z.string().email().optional(),
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
-  isActive: z.boolean().optional(),
-  role: z.enum(["SUPER_ADMIN", "ADMIN", "OPERATOR"]).optional(),
+const updateUserSchema = z
+  .object({
+    email: z.string().email().optional(),
+    firstName: z.string().min(1).max(60).optional(),
+    lastName: z.string().min(1).max(60).optional(),
+    isActive: z.boolean().optional(),
+    role: z.enum(["SUPER_ADMIN", "ADMIN", "OPERATOR"]).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Body vacío" });
+
+const passwordSchema = z.object({ password: z.string().min(8).max(128) });
+const selfPasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(128),
 });
 
+// Todo el control de escalada vive en el servicio; el controller solo saca al actor del JWT.
+function actor(req: AuthRequest): Actor {
+  if (!req.user) throw unauthorized();
+  return { userId: req.user.userId, role: req.user.role };
+}
+
 export class UserController {
-  async findAll(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const result = await userService.findAll(page, limit);
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  findAll = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    res.json(await userService.findAll(page, limit));
+  });
 
-  async findById(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const user = await userService.findById(req.params.id);
-      res.json(user);
-    } catch (error: any) {
-      res.status(404).json({ error: error.message });
-    }
-  }
+  findById = asyncHandler(async (req: AuthRequest, res: Response) => {
+    res.json(await userService.findById(req.params.id));
+  });
 
-  async create(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const body = createUserSchema.parse(req.body);
-      const user = await userService.create(body);
-      res.status(201).json(user);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        res.status(400).json({ error: "Validation error", details: error.errors });
-        return;
-      }
-      res.status(400).json({ error: error.message });
-    }
-  }
+  create = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const body = createUserSchema.parse(req.body);
+    res.status(201).json(await userService.create(actor(req), body));
+  });
 
-  async update(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const body = updateUserSchema.parse(req.body);
-      const user = await userService.update(req.params.id, body);
-      res.json(user);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        res.status(400).json({ error: "Validation error", details: error.errors });
-        return;
-      }
-      res.status(400).json({ error: error.message });
-    }
-  }
+  update = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const body = updateUserSchema.parse(req.body);
+    res.json(await userService.update(actor(req), req.params.id, body));
+  });
 
-  async delete(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      await userService.delete(req.params.id);
-      res.json({ message: "User deleted successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  delete = asyncHandler(async (req: AuthRequest, res: Response) => {
+    await userService.delete(actor(req), req.params.id);
+    res.json({ message: "User deleted successfully" });
+  });
 
-  async changePassword(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const { password } = req.body;
-      if (!password || password.length < 8) {
-        res.status(400).json({ error: "Password must be at least 8 characters" });
-        return;
-      }
-      await userService.changePassword(req.params.id, password);
-      res.json({ message: "Password changed successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  changePassword = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { password } = passwordSchema.parse(req.body);
+    await userService.changePassword(actor(req), req.params.id, password);
+    res.json({ message: "Password changed successfully" });
+  });
+
+  // Un usuario con permiso de gestión puede cambiar la contraseña de otro, pero no le conviene
+  // pasar por ahí para cambiar la suya: este endpoint exige la contraseña actual.
+  changeOwnPassword = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { currentPassword, newPassword } = selfPasswordSchema.parse(req.body);
+    res.json(await userService.selfChangePassword(actor(req), currentPassword, newPassword));
+  });
 }
 
 export const userController = new UserController();

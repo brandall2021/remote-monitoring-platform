@@ -1,5 +1,7 @@
 import prisma from "../config/database";
 import { CommandType, CommandStatus } from "../types";
+import { notFoundError } from "../lib/errors";
+import { parsePagination } from "../middleware/pagination";
 
 export class CommandService {
   async create(data: {
@@ -11,7 +13,7 @@ export class CommandService {
     const device = await prisma.device.findUnique({
       where: { id: data.deviceId },
     });
-    if (!device) throw new Error("Device not found");
+    if (!device) throw notFoundError("Device not found");
 
     const command = await prisma.deviceCommand.create({
       data: {
@@ -91,12 +93,13 @@ export class CommandService {
   }
 
   async findByDevice(deviceId: string, page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
+    const bounded = parsePagination({ page, limit });
+    const skip = bounded.skip;
     const [commands, total] = await Promise.all([
       prisma.deviceCommand.findMany({
         where: { deviceId },
         skip,
-        take: limit,
+        take: bounded.limit,
         include: {
           requestedBy: { select: { username: true } },
         },
@@ -107,7 +110,7 @@ export class CommandService {
 
     return {
       commands,
-      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+      pagination: { total, page: bounded.page, limit: bounded.limit, pages: Math.ceil(total / bounded.limit) },
     };
   }
 
@@ -123,14 +126,15 @@ export class CommandService {
   }
 
   async findAll(page: number = 1, limit: number = 20, status?: CommandStatus) {
-    const skip = (page - 1) * limit;
+    const bounded = parsePagination({ page, limit });
+    const skip = bounded.skip;
     const where = status ? { status } : {};
 
     const [commands, total] = await Promise.all([
       prisma.deviceCommand.findMany({
         where,
         skip,
-        take: limit,
+        take: bounded.limit,
         include: {
           device: { select: { hostname: true, id: true } },
           requestedBy: { select: { username: true } },
@@ -142,7 +146,7 @@ export class CommandService {
 
     return {
       commands,
-      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+      pagination: { total, page: bounded.page, limit: bounded.limit, pages: Math.ceil(total / bounded.limit) },
     };
   }
 }

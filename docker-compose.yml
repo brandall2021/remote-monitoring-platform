@@ -1,20 +1,21 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: monitoring-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: remote_monitoring
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Sin default: una base con contraseña "postgres" publicada en 5432 es un hallazgo de
+      # auditoría garantizado. docker-compose exige el valor y el deploy falla en vez de arrancar flojo.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
+      POSTGRES_DB: ${POSTGRES_DB:-remote_monitoring}
     ports:
-      - "5432:5432"
+      # 127.0.0.1: la base no se expone a la red del host.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,7 +25,7 @@ services:
     container_name: monitoring-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -40,18 +41,21 @@ services:
     container_name: monitoring-server
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/remote_monitoring
-      JWT_SECRET: ${JWT_SECRET:-change-this-jwt-secret-in-production}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-refresh-secret}
-      JWT_EXPIRES_IN: 15m
-      JWT_REFRESH_EXPIRES_IN: 7d
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-remote_monitoring}
+      # Los defaults "change-this-*" del repo quedaron eliminados: el server ahora se niega a
+      # arrancar sin secretos, así que ${VAR:?} acá da el error de configuración antes del deploy.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio (openssl rand -hex 32)}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET es obligatorio (openssl rand -hex 32)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
       REDIS_URL: redis://redis:6379
       PORT: 3000
       NODE_ENV: production
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
-      AGENT_REGISTRATION_TOKEN: ${AGENT_REGISTRATION_TOKEN:-change-this-agent-token}
+      AGENT_REGISTRATION_TOKEN: ${AGENT_REGISTRATION_TOKEN:?AGENT_REGISTRATION_TOKEN es obligatorio}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SCREENSHOTS_DIR: ./uploads/screenshots
     volumes:
       - screenshots_data:/app/uploads/screenshots

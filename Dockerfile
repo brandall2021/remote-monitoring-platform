@@ -38,4 +38,10 @@ COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80 3000
 
-CMD ["sh", "-c", "nginx && npx prisma db push && node dist/prisma/seed.js && node dist/server.js"]
+# migrate deploy (no "db push"): db push altera el esquema sin dejar registro en
+# _prisma_migrations, así que dos contenedores con imágenes distintas pueden dejar la base en un
+# estado que nadie puede reproducir. El seed es idempotente y no pisa contraseñas existentes.
+#
+# Si esta base ya se creó con "db push", hay que baseliniar UNA vez antes del primer deploy:
+#   npx prisma migrate resolve --applied 20260810000000_init
+CMD ["sh", "-c", "nginx && npx prisma migrate deploy && node dist/prisma/seed.js && node dist/server.js"]

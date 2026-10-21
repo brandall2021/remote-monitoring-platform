@@ -6,7 +6,7 @@ import {
   useCallback,
   ReactNode,
 } from "react";
-import { authAPI, User } from "../services/api";
+import { authAPI, User, refreshSession, setAccessToken, clearAccessToken } from "../services/api";
 
 interface AuthContextType {
   user: User | null;
@@ -25,29 +25,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Al recargar, el access token en memoria se perdió. La sesión se rearma con la cookie HttpOnly:
+  // se pide un access nuevo y recién después se lee el perfil.
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    let cancelled = false;
 
-    authAPI
-      .profile()
-      .then((res) => setUser(res.data))
-      .catch(() => {
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-      })
-      .finally(() => setLoading(false));
+    (async () => {
+      const token = await refreshSession();
+      if (!token) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+      try {
+        const res = await authAPI.profile();
+        if (!cancelled) setUser(res.data);
+      } catch {
+        clearAccessToken();
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
     try {
       const { data } = await authAPI.login(email, password);
-      localStorage.setItem("accessToken", data.accessToken);
-      localStorage.setItem("refreshToken", data.refreshToken);
+      // accessToken en memoria; el refreshToken ni se ve: quedó en la cookie del navegador.
+      setAccessToken(data.accessToken);
       setUser(data.user);
     } catch (err: unknown) {
       const message =
@@ -59,10 +68,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    const refreshToken = localStorage.getItem("refreshToken");
-    if (refreshToken) authAPI.logout(refreshToken).catch(() => {});
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+    authAPI.logout().catch(() => {});
+    clearAccessToken();
     setUser(null);
     setError(null);
   }, []);

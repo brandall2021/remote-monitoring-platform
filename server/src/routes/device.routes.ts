@@ -1,43 +1,59 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { deviceController } from "../controllers/device.controller";
 import { authenticate } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { auditLog } from "../middleware/audit";
 import { Permission } from "../types";
 
 const router = Router();
 
-router.post("/register", (req, res) => deviceController.register(req, res));
+// El register solo conoce el token de onboarding como secreto: sin límite, se puede atacar por
+// fuerza bruta desde cualquier host con el mismo peso que un login.
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many registration attempts" },
+});
+
+router.post("/register", registerLimiter, (req, res, next) =>
+  deviceController.register(req, res, next)
+);
 
 router.get(
   "/stats",
   authenticate,
   requirePermission(Permission.DEVICES_READ),
-  (req, res) => deviceController.getStats(req, res)
+  deviceController.getStats
 );
 
 router.get(
   "/",
   authenticate,
   requirePermission(Permission.DEVICES_READ),
-  (req, res) => deviceController.findAll(req, res)
+  deviceController.findAll
 );
 router.get(
   "/:id",
   authenticate,
   requirePermission(Permission.DEVICES_READ),
-  (req, res) => deviceController.findById(req, res)
+  deviceController.findById
 );
 router.put(
   "/:id",
   authenticate,
   requirePermission(Permission.DEVICES_WRITE),
-  (req, res) => deviceController.update(req, res)
+  auditLog("DEVICE_UPDATE", "device"),
+  deviceController.update
 );
 router.delete(
   "/:id",
   authenticate,
   requirePermission(Permission.DEVICES_DELETE),
-  (req, res) => deviceController.delete(req, res)
+  auditLog("DEVICE_DELETE", "device"),
+  deviceController.delete
 );
 
 export default router;

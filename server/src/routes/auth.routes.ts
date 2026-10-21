@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { authController } from "../controllers/auth.controller";
 import { authenticate } from "../middleware/auth";
+import { auditLog } from "../middleware/audit";
 
 const router = Router();
 
-router.post("/login", (req, res) => authController.login(req, res));
-router.post("/refresh", (req, res) => authController.refresh(req, res));
-router.post("/logout", authenticate, (req, res) => authController.logout(req, res));
-router.get("/profile", authenticate, (req, res) => authController.profile(req, res));
+router.post("/login", authController.login);
+router.post("/refresh", authController.refresh);
+router.post("/logout", authenticate, auditLog("LOGOUT", "auth"), authController.logout);
+router.get("/profile", authenticate, authController.profile);
 
 export default router;

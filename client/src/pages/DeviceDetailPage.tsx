@@ -34,6 +34,7 @@ import { getAdminSocket } from "../services/websocket";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
+import { getAccessToken } from "../services/tokenStore";
 
 export default function DeviceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -105,9 +106,9 @@ export default function DeviceDetailPage() {
   }, [loadDevice]);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
+    const token = getAccessToken();
     if (!token) return;
-    const socket = getAdminSocket(token);
+    const socket = getAdminSocket();
 
     const onFrame = (
       payload: ArrayBuffer | Blob,
@@ -140,9 +141,9 @@ export default function DeviceDetailPage() {
   }, [id]);
 
   const startLiveView = useCallback(() => {
-    const token = localStorage.getItem("accessToken");
+    const token = getAccessToken();
     if (!token || !id) return;
-    const socket = getAdminSocket(token);
+    const socket = getAdminSocket();
     setLiveActive(true);
     setLiveFrame(null);
     setLiveError(null);
@@ -160,8 +161,8 @@ export default function DeviceDetailPage() {
       clearInterval(liveTimerRef.current);
       liveTimerRef.current = null;
     }
-    const token = localStorage.getItem("accessToken");
-    if (token) getAdminSocket(token).emit("stop-live-view", { deviceId: id });
+    const token = getAccessToken();
+    if (token) getAdminSocket().emit("stop-live-view", { deviceId: id });
     setLiveActive(false);
     setLiveFrame(null);
     setLiveError(null);
@@ -171,9 +172,9 @@ export default function DeviceDetailPage() {
     (ms: number) => {
       setLiveIntervalMs(ms);
       if (!liveActive || !liveTimerRef.current) return;
-      const token = localStorage.getItem("accessToken");
+      const token = getAccessToken();
       if (!token || !id) return;
-      const socket = getAdminSocket(token);
+      const socket = getAdminSocket();
       clearInterval(liveTimerRef.current);
       socket.emit("live-view-frame", { deviceId: id });
       liveTimerRef.current = setInterval(() => {
@@ -276,8 +277,8 @@ export default function DeviceDetailPage() {
         recorderRef.current.stop();
       }
       if (liveTimerRef.current) clearInterval(liveTimerRef.current);
-      const token = localStorage.getItem("accessToken");
-      if (token && id) getAdminSocket(token).emit("stop-live-view", { deviceId: id });
+      const token = getAccessToken();
+      if (token && id) getAdminSocket().emit("stop-live-view", { deviceId: id });
     },
     [id]
   );
@@ -341,7 +342,24 @@ export default function DeviceDetailPage() {
     return <ErrorState message={error || "Dispositivo no encontrado"} onRetry={loadDevice} />;
   }
 
-  return (
+    // Antes se abría /uploads/screenshots/<archivo> en una pestaña nueva: ese mount estático era
+  // público y no pedía credenciales. Ahora la captura se descarga autenticada y se abre desde un
+  // object URL.
+  const openScreenshot = async (id: string) => {
+    try {
+      const blob = await screenshotsAPI.imageBlob(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `captura-${id.slice(0, 8)}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      alert("No se pudo abrir la captura");
+    }
+  };
+
+return (
     <Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
         <IconButton onClick={() => navigate("/devices")} size="small" aria-label="Volver a dispositivos">
@@ -678,14 +696,11 @@ export default function DeviceDetailPage() {
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Tooltip title="Ver captura">
+                            <Tooltip title="Abrir captura">
                               <IconButton
                                 size="small"
-                                onClick={() => {
-                                  const filename = ss.filePath.split("/").pop();
-                                  window.open(`/uploads/screenshots/${filename}`, "_blank");
-                                }}
-                                aria-label="Ver captura"
+                                onClick={() => void openScreenshot(ss.id)}
+                                aria-label="Abrir captura"
                               >
                                 <Visibility fontSize="small" />
                               </IconButton>

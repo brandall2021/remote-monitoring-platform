@@ -1,8 +1,11 @@
-import { Response } from "express";
+import { Request, Response } from "express";
 import { deviceService } from "../services/device.service";
 import { AuthRequest } from "../middleware/auth";
 import { DeviceRole, DeviceStatus } from "../types";
 import { config } from "../config";
+import { safeCompare } from "../security/tokens";
+import { asyncHandler, forbidden, badRequest } from "../lib/errors";
+import { parsePagination } from "../middleware/pagination";
 import { z } from "zod";
 
 const updateDeviceSchema = z.object({
@@ -10,76 +13,59 @@ const updateDeviceSchema = z.object({
   alias: z.string().trim().max(120).nullable().optional(),
 });
 
+// El body de /register venía directo a prisma.device.create sin esquema: el agente podía fijar
+// cualquier campo, incluido status. Se declara qué acepta el endpoint y nada más.
+const registerSchema = z.object({
+  hostname: z.string().trim().min(1).max(120),
+  operatingSystem: z.string().trim().min(1).max(120),
+  osVersion: z.string().trim().max(120).optional(),
+  ipAddress: z.string().trim().min(1).max(64),
+  macAddress: z.string().trim().max(64).optional(),
+  platform: z.string().trim().min(1).max(40),
+  agentVersion: z.string().trim().max(40).default("unknown"),
+  registrationToken: z.string().min(16),
+});
+
 export class DeviceController {
-  async findAll(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const status = req.query.status as DeviceStatus | undefined;
-      const result = await deviceService.findAll(page, limit, status);
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  findAll = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    const status = req.query.status as DeviceStatus | undefined;
+    res.json(await deviceService.findAll(page, limit, status));
+  });
 
-  async findById(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const device = await deviceService.findById(req.params.id);
-      res.json(device);
-    } catch (error: any) {
-      res.status(404).json({ error: error.message });
-    }
-  }
+  findById = asyncHandler(async (req: AuthRequest, res: Response) => {
+    res.json(await deviceService.findById(req.params.id));
+  });
 
-  async getStats(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const stats = await deviceService.getStats();
-      res.json(stats);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  getStats = asyncHandler(async (req: AuthRequest, res: Response) => {
+    res.json(await deviceService.getStats());
+  });
 
-  async register(req: Request, res: Response): Promise<void> {
-    try {
-      const { registrationToken } = req.body;
-      if (registrationToken !== config.agent.registrationToken) {
-        res.status(403).json({ error: "Invalid registration token" });
-        return;
-      }
+  register = asyncHandler(async (req: Request, res: Response) => {
+    const body = registerSchema.parse(req.body);
 
-      const device = await deviceService.register(req.body);
-      res.status(201).json(device);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
+    // safeCompare: con !== el server respondía antes de terminar la comparación, y eso deja
+    // filtrar el token de onboarding por temporización desde la red.
+    if (!safeCompare(body.registrationToken, config.agent.registrationToken)) {
+      throw forbidden("Invalid registration token");
     }
-  }
 
-  async delete(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      await deviceService.delete(req.params.id);
-      res.json({ message: "Device deleted successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+    // El token compartido es solo credencial de alta: no se persiste en la fila, se guarda el
+    // generado acá, único por dispositivo.
+    const { registrationToken: _onboardingToken, ...deviceData } = body;
+    const device = await deviceService.register(deviceData);
+    res.status(201).json(device);
+  });
 
-  async update(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const body = updateDeviceSchema.parse(req.body);
-      const device = await deviceService.update(req.params.id, body);
-      res.json(device);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        res.status(400).json({ error: "Validation error", details: error.errors });
-        return;
-      }
-      res.status(400).json({ error: error.message });
-    }
-  }
+  delete = asyncHandler(async (req: AuthRequest, res: Response) => {
+    await deviceService.delete(req.params.id);
+    res.json({ message: "Device deleted successfully" });
+  });
+
+  update = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const body = updateDeviceSchema.parse(req.body);
+    res.json(await deviceService.update(req.params.id, body));
+  });
 }
-
-import { Request } from "express";
 
 export const deviceController = new DeviceController();

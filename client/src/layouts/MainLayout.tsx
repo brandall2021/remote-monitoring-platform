@@ -29,16 +29,20 @@ import {
   Circle,
 } from "@mui/icons-material";
 import { useAuth } from "../hooks/useAuth";
-import { getAdminSocket } from "../services/websocket";
+import { can } from "../lib/permissions";
+import { getAccessToken } from "../services/tokenStore";
+import { disconnectAdminSocket, getAdminSocket } from "../services/websocket";
 
 const DRAWER_WIDTH = 240;
 
-const menuItems = [
+// `permission` filtra el menú según el rol del usuario logueado; el guard de App.tsx hace lo
+// propio con la ruta. Sin esto, un OPERATOR ve "Usuarios" y termina en una página llena de 403.
+const menuItems: { text: string; icon: React.ReactNode; path: string; permission?: string }[] = [
   { text: "Panel", icon: <Dashboard fontSize="small" />, path: "/" },
   { text: "Dispositivos", icon: <Computer fontSize="small" />, path: "/devices" },
   { text: "Capturas", icon: <PhotoCamera fontSize="small" />, path: "/screenshots" },
-  { text: "Usuarios", icon: <People fontSize="small" />, path: "/users" },
-  { text: "Registro de Auditoría", icon: <Assessment fontSize="small" />, path: "/audit" },
+  { text: "Usuarios", icon: <People fontSize="small" />, path: "/users", permission: "USERS_READ" },
+  { text: "Registro de Auditoría", icon: <Assessment fontSize="small" />, path: "/audit", permission: "AUDIT_READ" },
 ];
 
 function isSelected(path: string, pathname: string) {
@@ -56,10 +60,10 @@ export default function MainLayout() {
   const [socketConnected, setSocketConnected] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
+    const token = getAccessToken();
     if (!token) return;
 
-    const socket = getAdminSocket(token);
+    const socket = getAdminSocket();
 
     socket.on("connect", () => setSocketConnected(true));
     socket.on("disconnect", () => setSocketConnected(false));
@@ -79,6 +83,14 @@ export default function MainLayout() {
       socket.off("device-status");
     };
   }, []);
+
+  // Al logout se desconecta el socket: si no, la sesión siguiente hereda una conexión abierta con
+  // el token anterior y los handlers de dispositivo siguen recibiendo eventos.
+  const handleLogout = () => {
+    disconnectAdminSocket();
+    logout();
+    navigate("/login");
+  };
 
   const drawer = (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -106,7 +118,7 @@ export default function MainLayout() {
       <Divider sx={{ borderColor: "divider" }} />
 
       <List sx={{ px: 1.5, py: 1, flex: 1 }}>
-        {menuItems.map((item) => {
+        {menuItems.filter((item) => !item.permission || can(user, item.permission)).map((item) => {
           const active = isSelected(item.path, location.pathname);
           return (
             <ListItemButton
@@ -257,7 +269,7 @@ export default function MainLayout() {
             <Divider />
             <MenuItem
               onClick={() => {
-                logout();
+                handleLogout();
                 navigate("/login");
               }}
             >

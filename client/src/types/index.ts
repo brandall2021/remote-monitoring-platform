@@ -52,7 +52,7 @@ export interface Screenshot {
   id: string;
   deviceId: string;
   requestedById: string;
-  filePath: string;
+  // filePath se quitó a propósito: exponer la ruta interna del server no aporta al cliente.
   fileSize?: number;
   mimeType: string;
   width?: number;

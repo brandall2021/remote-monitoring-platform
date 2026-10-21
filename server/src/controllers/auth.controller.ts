@@ -1,75 +1,50 @@
 import { Request, Response } from "express";
 import { authService } from "../services/auth.service";
 import { AuthRequest } from "../middleware/auth";
+import { asyncHandler, unauthorized } from "../lib/errors";
+import { readRefreshCookie, setRefreshCookie, clearRefreshCookie } from "../lib/cookies";
 import { z } from "zod";
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
-});
-
-const refreshSchema = z.object({
-  refreshToken: z.string(),
+  password: z.string().min(6).max(128),
 });
 
 export class AuthController {
-  async login(req: Request, res: Response): Promise<void> {
-    try {
-      const body = loginSchema.parse(req.body);
-      const result = await authService.login(
-        body.email,
-        body.password,
-        req.ip || req.socket.remoteAddress || "",
-        req.headers["user-agent"] || ""
-      );
-      res.json(result);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        res.status(400).json({ error: "Validation error", details: error.errors });
-        return;
-      }
-      res.status(401).json({ error: error.message });
-    }
-  }
+  // El refreshToken ya no se devuelve en el JSON: se entrega solo como cookie HttpOnly. Un XSS en
+  // la SPA pierde así la capacidad de exportar una sesión de 7 días.
+  login = asyncHandler(async (req: Request, res: Response) => {
+    const body = loginSchema.parse(req.body);
+    const { refreshToken, ...result } = await authService.login(
+      body.email,
+      body.password,
+      req.ip || req.socket.remoteAddress || "",
+      req.headers["user-agent"] || ""
+    );
+    setRefreshCookie(res, refreshToken);
+    res.json(result);
+  });
 
-  async refresh(req: Request, res: Response): Promise<void> {
-    try {
-      const body = refreshSchema.parse(req.body);
-      const result = await authService.refresh(body.refreshToken);
-      res.json(result);
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        res.status(400).json({ error: "Validation error", details: error.errors });
-        return;
-      }
-      res.status(401).json({ error: error.message });
-    }
-  }
+  refresh = asyncHandler(async (req: Request, res: Response) => {
+    const token = readRefreshCookie(req);
+    if (!token) throw unauthorized("Sesión no válida");
 
-  async logout(req: Request, res: Response): Promise<void> {
-    try {
-      const { refreshToken } = req.body;
-      if (refreshToken) {
-        await authService.logout(refreshToken);
-      }
-      res.json({ message: "Logged out successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+    const { refreshToken, ...result } = await authService.refresh(token);
+    setRefreshCookie(res, refreshToken);
+    res.json(result);
+  });
 
-  async profile(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ error: "Not authenticated" });
-        return;
-      }
-      const profile = await authService.getProfile(req.user.userId);
-      res.json(profile);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  logout = asyncHandler(async (req: Request, res: Response) => {
+    const token = readRefreshCookie(req);
+    if (token) await authService.logout(token);
+    clearRefreshCookie(res);
+    res.json({ message: "Logged out successfully" });
+  });
+
+  profile = asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw unauthorized();
+    res.json(await authService.getProfile(req.user.userId));
+  });
 }
 
 export const authController = new AuthController();

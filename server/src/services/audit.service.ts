@@ -1,4 +1,12 @@
 import prisma from "../config/database";
+import { parsePagination, MAX_PAGE_SIZE } from "../middleware/pagination";
+import { badRequest } from "../lib/errors";
+
+function parseDateFilter(value: string, label: string): Date {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) throw badRequest(`${label} no es una fecha válida`);
+  return d;
+}
 
 export class AuditService {
   async findAll(
@@ -12,23 +20,25 @@ export class AuditService {
       endDate?: string;
     }
   ) {
-    const skip = (page - 1) * limit;
-    const where: Record<string, any> = {};
+    const bounded = parsePagination({ page, limit });
+    const skip = bounded.skip;
+    const where: Record<string, unknown> = {};
 
     if (filters?.userId) where.userId = filters.userId;
     if (filters?.action) where.action = filters.action;
     if (filters?.resource) where.resource = filters.resource;
     if (filters?.startDate || filters?.endDate) {
-      where.createdAt = {};
-      if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+      const createdAt: Record<string, Date> = {};
+      if (filters.startDate) createdAt.gte = parseDateFilter(filters.startDate, "startDate");
+      if (filters.endDate) createdAt.lte = parseDateFilter(filters.endDate, "endDate");
+      where.createdAt = createdAt;
     }
 
     const [logs, total] = await Promise.all([
       prisma.auditLog.findMany({
         where,
         skip,
-        take: limit,
+        take: Math.min(bounded.limit, MAX_PAGE_SIZE),
         include: {
           user: { select: { username: true, email: true } },
         },
@@ -41,9 +51,9 @@ export class AuditService {
       logs,
       pagination: {
         total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
+        page: bounded.page,
+        limit: bounded.limit,
+        pages: Math.ceil(total / bounded.limit),
       },
     };
   }

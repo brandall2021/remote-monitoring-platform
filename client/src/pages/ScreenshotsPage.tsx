@@ -15,6 +15,7 @@ import { screenshotsAPI, Screenshot } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import ErrorState from "../components/ErrorState";
 import EmptyState from "../components/EmptyState";
+import { useAuthorizedScreenshot } from "../hooks/useAuthorizedScreenshot";
 
 export default function ScreenshotsPage() {
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
@@ -24,7 +25,6 @@ export default function ScreenshotsPage() {
   const [total, setTotal] = useState(0);
   const [previewDialog, setPreviewDialog] = useState(false);
   const [selectedScreenshot, setSelectedScreenshot] = useState<Screenshot | null>(null);
-  const [imageLoading, setImageLoading] = useState(false);
 
   const loadScreenshots = useCallback(async (page = 1) => {
     setLoading(true);
@@ -45,9 +45,21 @@ export default function ScreenshotsPage() {
     loadScreenshots();
   }, [loadScreenshots]);
 
-  const getScreenshotUrl = (filePath: string) => {
-    const filename = filePath.split("/").pop();
-    return `/uploads/screenshots/${filename}`;
+  // La imagen se pide autenticada por id; ya no existe /uploads/screenshots público.
+  const { url: previewUrl, loading: imageLoading, error: imageError } = useAuthorizedScreenshot(
+    selectedScreenshot?.id ?? null
+  );
+
+  const downloadPreview = async () => {
+    if (!selectedScreenshot) return;
+    const blob = await screenshotsAPI.imageBlob(selectedScreenshot.id);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `screenshot-${selectedScreenshot.id.slice(0, 8)}.png`;
+    a.click();
+    // El object URL tiene que sobrevivir al click: se libera en el tick siguiente.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const columns: GridColDef[] = [
@@ -119,7 +131,6 @@ export default function ScreenshotsPage() {
           onClick={() => {
             setSelectedScreenshot(params.row);
             setPreviewDialog(true);
-            setImageLoading(true);
           }}
           aria-label="Ver captura"
         >
@@ -193,11 +204,7 @@ export default function ScreenshotsPage() {
             {selectedScreenshot && (
               <IconButton
                 onClick={() => {
-                  const url = getScreenshotUrl(selectedScreenshot.filePath);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `screenshot-${selectedScreenshot.id.slice(0, 8)}.png`;
-                  a.click();
+                  void downloadPreview();
                 }}
                 aria-label="Descargar captura"
                 sx={{ mr: 1 }}
@@ -224,16 +231,19 @@ export default function ScreenshotsPage() {
                   <CircularProgress size={32} sx={{ color: "primary.main" }} />
                 </Box>
               )}
+              {imageError && (
+                <Typography variant="body2" color="error.main" sx={{ py: 4 }}>
+                  {imageError}
+                </Typography>
+              )}
               <img
-                src={getScreenshotUrl(selectedScreenshot.filePath)}
+                src={previewUrl ?? undefined}
                 alt={`Screenshot from ${selectedScreenshot.device?.hostname || "device"} at ${new Date(selectedScreenshot.createdAt).toLocaleString()}`}
                 style={{
                   maxWidth: "100%",
                   borderRadius: 8,
                   display: imageLoading ? "none" : "block",
                 }}
-                onLoad={() => setImageLoading(false)}
-                onError={() => setImageLoading(false)}
               />
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                 {selectedScreenshot.device?.hostname} - {new Date(selectedScreenshot.createdAt).toLocaleString()}

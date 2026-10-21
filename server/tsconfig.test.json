@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Los tests viven al lado del codigo que prueban y el seed esta fuera de src/, asi que la
+    // raiz de compilacion de la bateria de tests es el proyecto completo.
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*", "prisma/**/*.ts"]
+}

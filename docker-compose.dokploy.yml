@@ -1,12 +1,10 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
       POSTGRES_DB: ${POSTGRES_DB:-remote_monitoring}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -40,17 +38,19 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     environment:
+      # POSTGRES_PASSWORD debe ser alfanumérica: caracteres como @ / : rompen la connection string.
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-remote_monitoring}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio (openssl rand -hex 32)}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET es obligatorio}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
       REDIS_URL: redis://redis:6379
       PORT: 3000
       NODE_ENV: production
       CORS_ORIGIN: ${CORS_ORIGIN}
-      AGENT_REGISTRATION_TOKEN: ${AGENT_REGISTRATION_TOKEN}
-      SCREENSHOTS_DIR: ./uploads/screenshots
+      AGENT_REGISTRATION_TOKEN: ${AGENT_REGISTRATION_TOKEN:?AGENT_REGISTRATION_TOKEN es obligatorio}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
     volumes:
       - screenshots_data:/app/uploads/screenshots
     depends_on:

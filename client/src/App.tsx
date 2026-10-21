@@ -9,6 +9,7 @@ import UsersPage from "./pages/UsersPage";
 import AuditPage from "./pages/AuditPage";
 import ScreenshotsPage from "./pages/ScreenshotsPage";
 import MainLayout from "./layouts/MainLayout";
+import { can } from "./lib/permissions";
 import { Box, Typography, Button } from "@mui/material";
 import { Link } from "react-router-dom";
 
@@ -16,6 +17,15 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
   if (loading) return <LoadingSpinner fullScreen />;
   if (!isAuthenticated) return <Navigate to="/login" />;
+  return <>{children}</>;
+}
+
+// Guard por permiso en el cliente. No reemplaza la autorización del server: evita que un OPERATOR
+// entre a /users, vea el formulario de alto de usuarios y reciba 403 en cada campo.
+function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingSpinner fullScreen />;
+  if (!can(user, permission)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -64,9 +74,23 @@ function App() {
           <Route index element={<DashboardPage />} />
           <Route path="devices" element={<DevicesPage />} />
           <Route path="devices/:id" element={<DeviceDetailPage />} />
-          <Route path="users" element={<UsersPage />} />
+          <Route
+            path="users"
+            element={
+              <RequirePermission permission="USERS_READ">
+                <UsersPage />
+              </RequirePermission>
+            }
+          />
           <Route path="screenshots" element={<ScreenshotsPage />} />
-          <Route path="audit" element={<AuditPage />} />
+          <Route
+            path="audit"
+            element={
+              <RequirePermission permission="AUDIT_READ">
+                <AuditPage />
+              </RequirePermission>
+            }
+          />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

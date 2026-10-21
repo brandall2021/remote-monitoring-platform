@@ -1,22 +1,43 @@
 import crypto from "crypto";
 import prisma from "../config/database";
 import { DeviceRole, DeviceStatus } from "../types";
+import { config } from "../config";
+import { notFoundError } from "../lib/errors";
+import { parsePagination } from "../middleware/pagination";
+
+// El registrationToken por dispositivo es la credencial con la que un agente se autentica por
+// WebSocket: quien la tiene, ES ese equipo. Por eso ninguna lectura destinada al panel la devuelve.
+// El único lugar donde sale del server es la respuesta de /register, al agente que recién se creó.
+export const DEVICE_PUBLIC_SELECT = {
+  id: true,
+  hostname: true,
+  alias: true,
+  agentVersion: true,
+  operatingSystem: true,
+  osVersion: true,
+  ipAddress: true,
+  macAddress: true,
+  platform: true,
+  role: true,
+  status: true,
+  lastSeenAt: true,
+  registeredAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 export class DeviceService {
-  async findAll(
-    page: number = 1,
-    limit: number = 20,
-    status?: DeviceStatus
-  ) {
-    const skip = (page - 1) * limit;
+  async findAll(page: number = 1, limit: number = 20, status?: DeviceStatus) {
+    const bounded = parsePagination({ page, limit });
     const where = status ? { status } : {};
 
     const [devices, total] = await Promise.all([
       prisma.device.findMany({
         where,
-        skip,
-        take: limit,
-        include: {
+        skip: bounded.skip,
+        take: bounded.limit,
+        select: {
+          ...DEVICE_PUBLIC_SELECT,
           _count: { select: { commands: true, screenshots: true } },
         },
         orderBy: { lastSeenAt: "desc" },
@@ -28,9 +49,9 @@ export class DeviceService {
       devices,
       pagination: {
         total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
+        page: bounded.page,
+        limit: bounded.limit,
+        pages: Math.ceil(total / bounded.limit),
       },
     };
   }
@@ -38,7 +59,8 @@ export class DeviceService {
   async findById(id: string) {
     const device = await prisma.device.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...DEVICE_PUBLIC_SELECT,
         commands: {
           orderBy: { createdAt: "desc" },
           take: 10,
@@ -47,6 +69,16 @@ export class DeviceService {
         screenshots: {
           orderBy: { createdAt: "desc" },
           take: 10,
+          select: {
+            id: true,
+            deviceId: true,
+            requestedById: true,
+            fileSize: true,
+            mimeType: true,
+            width: true,
+            height: true,
+            createdAt: true,
+          },
         },
         events: {
           orderBy: { createdAt: "desc" },
@@ -54,7 +86,7 @@ export class DeviceService {
         },
       },
     });
-    if (!device) throw new Error("Device not found");
+    if (!device) throw notFoundError("Device not found");
     return device;
   }
 
@@ -66,7 +98,6 @@ export class DeviceService {
     macAddress?: string;
     platform: string;
     agentVersion: string;
-    registrationToken: string;
   }) {
     // Token unico por dispositivo: se genera en el server y se devuelve al
     // agente para la autenticacion por WebSocket. El registrationToken que
@@ -74,6 +105,7 @@ export class DeviceService {
     // validado en el controller. Esto permite registrar N equipos con el mismo
     // token de onboarding sin violar la restriccion unica de la tabla.
     const deviceToken = crypto.randomBytes(24).toString("base64url");
+
     const device = await prisma.device.create({
       data: {
         hostname: data.hostname,
@@ -87,6 +119,7 @@ export class DeviceService {
         status: DeviceStatus.ONLINE,
         lastSeenAt: new Date(),
       },
+      select: { ...DEVICE_PUBLIC_SELECT, registrationToken: true },
     });
 
     await prisma.deviceEvent.create({
@@ -106,6 +139,7 @@ export class DeviceService {
     return prisma.device.update({
       where: { id },
       data,
+      select: DEVICE_PUBLIC_SELECT,
     });
   }
 
@@ -116,6 +150,7 @@ export class DeviceService {
   ) {
     const device = await prisma.device.findUnique({
       where: { id: deviceId },
+      select: { id: true, hostname: true, ipAddress: true },
     });
     if (!device) return;
 
@@ -156,6 +191,7 @@ export class DeviceService {
         lastSeenAt: new Date(),
         agentVersion,
       },
+      select: DEVICE_PUBLIC_SELECT,
     });
     return device;
   }
@@ -164,16 +200,18 @@ export class DeviceService {
     const device = await prisma.device.update({
       where: { id: deviceId },
       data: { status: DeviceStatus.OFFLINE },
+      select: DEVICE_PUBLIC_SELECT,
     });
     return device;
   }
 
   async markOfflineDevices() {
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    // Antes tenía 5 min fijos contra un heartbeat de 30 s; ahora es configurable y tolera 3 latidos.
+    const cutoff = new Date(Date.now() - config.websocket.offlineAfterMs);
     const stale = await prisma.device.findMany({
       where: {
         status: DeviceStatus.ONLINE,
-        lastSeenAt: { lt: fiveMinutesAgo },
+        lastSeenAt: { lt: cutoff },
       },
       select: { id: true },
     });
@@ -185,13 +223,23 @@ export class DeviceService {
     await prisma.device.updateMany({
       where: {
         status: DeviceStatus.ONLINE,
-        lastSeenAt: { lt: fiveMinutesAgo },
+        lastSeenAt: { lt: cutoff },
       },
       data: { status: DeviceStatus.OFFLINE },
     });
   }
 
   async delete(id: string) {
+    // Los screenshots viven en disco y la FK es Cascade: borrar la fila sin limpiar el archivo
+    // deja capturas de escritorio huérfanas en el servidor para siempre.
+    const shots = await prisma.screenshot.findMany({
+      where: { deviceId: id },
+      select: { id: true, filePath: true },
+    });
+    const { rm } = await import("fs/promises");
+    for (const shot of shots) {
+      await rm(shot.filePath, { force: true }).catch(() => {});
+    }
     await prisma.device.delete({ where: { id } });
   }
 

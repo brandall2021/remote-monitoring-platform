@@ -9,6 +9,6 @@ const router = Router();
 router.use(authenticate);
 router.use(requirePermission(Permission.AUDIT_READ));
 
-router.get("/", (req, res) => auditController.findAll(req, res));
+router.get("/", auditController.findAll);
 
 export default router;

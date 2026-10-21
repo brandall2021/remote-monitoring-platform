@@ -2,99 +2,55 @@ import { Response } from "express";
 import { commandService } from "../services/command.service";
 import { AuthRequest } from "../middleware/auth";
 import { CommandType, CommandStatus } from "../types";
+import { asyncHandler, badRequest, forbidden } from "../lib/errors";
+import { parsePagination } from "../middleware/pagination";
+import { ALLOWED_COMMAND_TYPES, isAllowedCommandType } from "../websocket/commandPolicy";
+import { z } from "zod";
+
+const createSchema = z.object({
+  deviceId: z.string().min(1),
+  commandType: z.enum(ALLOWED_COMMAND_TYPES as unknown as [CommandType, ...CommandType[]]),
+  payload: z.record(z.unknown()).optional(),
+});
 
 export class CommandController {
-  async findAll(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const status = req.query.status as CommandStatus | undefined;
-      const result = await commandService.findAll(page, limit, status);
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  findAll = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    const status = req.query.status as CommandStatus | undefined;
+    res.json(await commandService.findAll(page, limit, status));
+  });
 
-  async findByDevice(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const page = parseInt(req.query.page as string) || 1;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const result = await commandService.findByDevice(
-        req.params.deviceId,
-        page,
-        limit
-      );
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  findByDevice = asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { page, limit } = parsePagination(req.query as Record<string, unknown>);
+    res.json(await commandService.findByDevice(req.params.deviceId, page, limit));
+  });
 
-  async create(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ error: "Not authenticated" });
-        return;
-      }
+  getPending = asyncHandler(async (req: AuthRequest, res: Response) => {
+    res.json(await commandService.findPending(req.params.deviceId));
+  });
 
-      const { deviceId, commandType, payload } = req.body;
-      if (!deviceId || !commandType) {
-        res.status(400).json({ error: "deviceId and commandType are required" });
-        return;
-      }
+  create = asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw forbidden("No autenticado");
+    const body = createSchema.parse(req.body);
+    if (!isAllowedCommandType(body.commandType)) throw badRequest("Tipo de comando inválido");
 
-      if (!Object.values(CommandType).includes(commandType)) {
-        res.status(400).json({ error: "Invalid command type" });
-        return;
-      }
+    const command = await commandService.create({
+      deviceId: body.deviceId,
+      requestedById: req.user.userId,
+      commandType: body.commandType,
+      payload: body.payload as Record<string, unknown> | undefined,
+    });
+    res.status(201).json(command);
+  });
 
-      const command = await commandService.create({
-        deviceId,
-        requestedById: req.user.userId,
-        commandType,
-        payload,
-      });
+  approve = asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw badRequest("No autenticado");
+    res.json(await commandService.approve(req.params.id, req.user.userId));
+  });
 
-      res.status(201).json(command);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-
-  async approve(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ error: "Not authenticated" });
-        return;
-      }
-      const command = await commandService.approve(
-        req.params.id,
-        req.user.userId
-      );
-      res.json(command);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-
-  async reject(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const command = await commandService.reject(req.params.id);
-      res.json(command);
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  }
-
-  async getPending(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const commands = await commandService.findPending(req.params.deviceId);
-      res.json(commands);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  }
+  reject = asyncHandler(async (req: AuthRequest, res: Response) => {
+    res.json(await commandService.reject(req.params.id));
+  });
 }
 
 export const commandController = new CommandController();
