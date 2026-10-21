@@ -1,5 +1,5 @@
 import os from "os";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -108,5 +108,7 @@ export function getSystemInfo() {
 }
 
 export function generateDeviceId(): string {
-  return uuidv4();
+  // randomUUID es v4 y CSPRNG, igual que uuid.v4 pero sin la dependencia que
+  // npm audit marcaba (el advisory era de v3/v5/v6 con buffer, y acá solo se usaba v4).
+  return randomUUID();
 }

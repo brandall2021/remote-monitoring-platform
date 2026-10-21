@@ -12,6 +12,7 @@ if (-not (Test-Path -LiteralPath $AgentExe)) {
 if (-not ("RemoteMonitor.SessionBridge" -as [type])) {
   Add-Type -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -107,6 +108,7 @@ namespace RemoteMonitor {
       IntPtr userToken = IntPtr.Zero;
       IntPtr primaryToken = IntPtr.Zero;
       IntPtr environment = IntPtr.Zero;
+      int envKind = 0;
       IntPtr process = IntPtr.Zero;
       IntPtr thread = IntPtr.Zero;
 
@@ -124,7 +126,8 @@ namespace RemoteMonitor {
           return 3;
         }
 
-        if (!CreateEnvironmentBlock(out environment, primaryToken, false)) {
+        environment = BuildEnvironmentWithSecret(primaryToken, out envKind);
+        if (environment == IntPtr.Zero) {
           Console.WriteLine("ERROR: CreateEnvironmentBlock failed (error " + Marshal.GetLastWin32Error() + ")");
           return 4;
         }
@@ -169,10 +172,53 @@ namespace RemoteMonitor {
       } finally {
         if (process != IntPtr.Zero) CloseHandle(process);
         if (thread != IntPtr.Zero) CloseHandle(thread);
-        if (environment != IntPtr.Zero) DestroyEnvironmentBlock(environment);
+        // envKind 1 = bloque creado por CreateEnvironmentBlock (LocalFree), 2 = el que reservo
+        // Marshal (CoTaskMemFree). Liberarlos con la otra API corrompe el heap.
+        if (environment != IntPtr.Zero) {
+          if (envKind == 2) Marshal.FreeHGlobal(environment); else DestroyEnvironmentBlock(environment);
+        }
         if (primaryToken != IntPtr.Zero) CloseHandle(primaryToken);
         if (userToken != IntPtr.Zero) CloseHandle(userToken);
       }
+    }
+
+    // El worker prueba ser el proceso que este supervisor levanto con un secreto efimero que solo
+    // existe en memoria. Se pasa en el bloque de entorno, no en la linea de comandos: el command
+    // line de un proceso lo puede leer cualquier cuenta de la consola (Task Manager, wmic, WMI).
+    public static IntPtr BuildEnvironmentWithSecret(IntPtr token, out int kind) {
+      kind = 0;
+      IntPtr baseEnv;
+      if (!CreateEnvironmentBlock(out baseEnv, token, false)) return IntPtr.Zero;
+      kind = 1;
+
+      string secret = Environment.GetEnvironmentVariable("RM_SESSION_SECRET");
+      if (string.IsNullOrEmpty(secret)) return baseEnv;
+
+      List<string> vars = new List<string>();
+      int offset = 0;
+      while (true) {
+        string entry = Marshal.PtrToStringUni(IntPtr.Add(baseEnv, offset));
+        if (string.IsNullOrEmpty(entry)) break;
+        vars.Add(entry);
+        offset += (entry.Length + 1) * 2;
+      }
+
+      DestroyEnvironmentBlock(baseEnv);
+      kind = 0;
+
+      vars.RemoveAll(delegate(string v) {
+        return string.IsNullOrEmpty(v) ||
+               v.StartsWith("RM_SESSION_SECRET=", StringComparison.OrdinalIgnoreCase);
+      });
+      vars.Add("RM_SESSION_SECRET=" + secret);
+
+      StringBuilder block = new StringBuilder();
+      foreach (string v in vars) { block.Append(v); block.Append('\0'); }
+      block.Append('\0');
+
+      IntPtr rebuilt = Marshal.StringToHGlobalUni(block.ToString());
+      kind = 2;
+      return rebuilt;
     }
   }
 }

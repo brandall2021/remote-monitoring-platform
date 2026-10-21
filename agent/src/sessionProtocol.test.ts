@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { FrameDecoder, encodeFrame, parseHeader } from "./sessionProtocol";
+import {
+  FrameDecoder,
+  MAX_SECRET_LENGTH,
+  createStatusHeader,
+  encodeFrame,
+  parseHeader,
+} from "./sessionProtocol";
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
 
@@ -48,6 +54,22 @@ describe("parseHeader", () => {
     });
   });
 
+  it("parses a hello so the worker can prove who it is", () => {
+    expect(parseHeader(JSON.stringify({ id: "h", kind: "hello", secret: "abc123" }))).toEqual({
+      id: "h",
+      kind: "hello",
+      secret: "abc123",
+    });
+  });
+
+  it("rejects a hello without a usable secret", () => {
+    expect(parseHeader(JSON.stringify({ id: "h", kind: "hello" }))).toBeNull();
+    expect(parseHeader(JSON.stringify({ id: "h", kind: "hello", secret: "" }))).toBeNull();
+    expect(
+      parseHeader(JSON.stringify({ id: "h", kind: "hello", secret: "x".repeat(MAX_SECRET_LENGTH + 1) }))
+    ).toBeNull();
+  });
+
   it("rejects malformed headers", () => {
     expect(parseHeader("not json")).toBeNull();
     expect(parseHeader("null")).toBeNull();
@@ -56,6 +78,40 @@ describe("parseHeader", () => {
     expect(parseHeader(JSON.stringify({ id: "a" }))).toBeNull();
     expect(parseHeader(JSON.stringify({ id: "a", kind: "response" }))).toBeNull();
     expect(parseHeader(JSON.stringify({ id: "a", kind: "request", type: "rm-rf" }))).toBeNull();
+  });
+});
+
+describe("status push", () => {
+  it("round-trips a sanitized status frame", () => {
+    const header = createStatusHeader("s1", {
+      state: "connected",
+      serverUrl: "https://monitor.example",
+      deviceId: "dev",
+      role: "supervisor",
+      pid: 4242,
+      updatedAt: "2026-10-21T12:00:00.000Z",
+    });
+    const decoded = parseHeader(JSON.stringify(header));
+    expect(decoded).toEqual(header);
+  });
+
+  it("only carries known scalar fields, and never a token", () => {
+    const header = createStatusHeader("s2", {
+      state: "disconnected",
+      registrationToken: "secreto-del-agente",
+      nested: { a: 1 },
+      lastError: "x".repeat(600),
+      pid: 1.9,
+    });
+
+    expect(Object.keys(header.status).sort()).toEqual(["pid", "state"]);
+    expect(header.status.pid).toBe(1);
+    expect(JSON.stringify(header)).not.toContain("secreto-del-agente");
+  });
+
+  it("drops a status frame with nothing recognizable inside", () => {
+    expect(parseHeader(JSON.stringify({ id: "s3", kind: "status", status: { basura: true } }))).toBeNull();
+    expect(parseHeader(JSON.stringify({ id: "s4", kind: "status", status: "conectado" }))).toBeNull();
   });
 });
 

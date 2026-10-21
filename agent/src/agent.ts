@@ -17,6 +17,35 @@ import { SessionSupervisor } from "./sessionSupervisor";
 import { SessionBridge } from "./sessionBridge";
 import { SessionWorker } from "./sessionWorker";
 import { createPowerShellBridgeRunner, defaultBridgeScriptPath } from "./sessionBridgeRunner";
+import { createSessionSecret, readSessionSecret } from "./sessionSecret";
+import { AgentState, makeStatus, writeAgentStatus } from "./agentStatus";
+
+let lastError: string | undefined;
+
+// Estado para la bandeja del sistema (RmTray.exe). En rol "session" el worker lo recibe por la pipe
+// y lo persiste el; acá nunca se levanta ese rol, así que este helper solo aplica a standalone y
+// supervisor. Fallar escribiendo el estado jamas puede tumbar al agente: es información cosmética.
+function reportStatus(state: AgentState, extra?: { error?: string; heartbeat?: boolean }): void {
+  if (extra?.error) lastError = extra.error;
+  if (state === "connected") lastError = undefined;
+
+  const status = makeStatus({
+    state,
+    serverUrl: config?.serverUrl || process.env.SERVER_URL || "",
+    deviceId: config?.deviceId,
+    role,
+    lastError,
+    lastHeartbeatAt:
+      state === "connected" || extra?.heartbeat ? new Date().toISOString() : undefined,
+  });
+
+  // Primero lo escribe este proceso (funciona en standalone/logon, donde ya es el usuario).
+  writeAgentStatus(status);
+
+  // En modo Session 0 este proceso es SYSTEM y no puede escribir en el perfil del usuario: el
+  // worker, que corre en la sesion interactiva, reescribe el mismo estado del otro lado de la pipe.
+  if (supervisor) supervisor.broadcastStatus(status);
+}
 
 let socket: Socket | null = null;
 let config: AgentConfig | null = null;
@@ -88,16 +117,19 @@ function connectSocket(): void {
 
   socket.on("connect", () => {
     console.log("Connected to server");
+    reportStatus("connected");
     startHeartbeat();
   });
 
   socket.on("disconnect", (reason) => {
     console.log(`Disconnected: ${reason}`);
+    reportStatus("disconnected", { error: reason });
     stopHeartbeat();
   });
 
   socket.on("connect_error", (error) => {
     console.error(`Connection error: ${error.message}`);
+    reportStatus("disconnected", { error: error.message });
   });
 
   socket.on("command", async (data: { commandId: string; type: string; payload?: any }) => {
@@ -231,6 +263,9 @@ function startHeartbeat(): void {
   heartbeatTimer = setInterval(() => {
     if (socket && socket.connected) {
       socket.emit("heartbeat", { agentVersion: config?.agentVersion });
+      // El tray muestra "hace N s del ultimo latido": si solo escribieramos al conectar, el icono
+      // se pondria rojo a los 2 minutos aunque el canal este sano.
+      reportStatus("connected", { heartbeat: true });
     }
   }, config?.heartbeatInterval || 30000);
 }
@@ -286,29 +321,33 @@ async function main(): Promise<void> {
   console.log(`Server: ${config.serverUrl}`);
   console.log(`Device ID: ${config.deviceId}`);
 
+  reportStatus("starting");
   connectSocket();
 
-  process.on("SIGINT", () => {
-    console.log("Shutting down...");
+  const stopAndExit = (signal: string) => {
+    console.log(`${signal} shutting down...`);
     stopHeartbeat();
+    reportStatus("stopped");
     if (socket) socket.disconnect();
     if (sessionBridge) sessionBridge.stop();
     if (supervisor) supervisor.stop();
     process.exit(0);
-  });
+  };
 
-  process.on("SIGTERM", () => {
-    console.log("Shutting down...");
-    stopHeartbeat();
-    if (socket) socket.disconnect();
-    if (sessionBridge) sessionBridge.stop();
-    if (supervisor) supervisor.stop();
-    process.exit(0);
-  });
+  process.on("SIGINT", () => stopAndExit("SIGINT"));
+  process.on("SIGTERM", () => stopAndExit("SIGTERM"));
 }
 
 async function startSessionRole(): Promise<void> {
-  sessionWorker = new SessionWorker();
+  const secret = readSessionSecret();
+  if (!secret) {
+    // Fail closed: sin el secreto que inyecta el supervisor en el bloque de entorno, el worker no
+    // puede probar quien es, y conectarse a ciegas solo rellena la pipe de conexiones descartadas.
+    console.error("Missing RM_SESSION_SECRET: this worker must be started by the session supervisor");
+    process.exit(1);
+  }
+
+  sessionWorker = new SessionWorker({ secret });
   sessionWorker.run();
   console.log("Session worker running. Waiting for requests from the supervisor.");
 
@@ -324,7 +363,10 @@ async function startSessionRole(): Promise<void> {
 }
 
 async function startSupervisor(): Promise<void> {
+  const sessionSecret = createSessionSecret();
+
   supervisor = new SessionSupervisor({
+    secret: sessionSecret,
     onWorkerChange: (hasWorker) => {
       if (!hasWorker && sessionBridge) sessionBridge.notifyWorkerDisconnected();
     },
@@ -336,6 +378,7 @@ async function startSupervisor(): Promise<void> {
     runBridge: createPowerShellBridgeRunner({
       scriptPath: defaultBridgeScriptPath(),
       agentExePath: process.execPath,
+      sessionSecret,
     }),
     hasLiveWorker: () => (supervisor ? supervisor.hasLiveWorker() : false),
   });

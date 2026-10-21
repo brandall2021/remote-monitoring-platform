@@ -1,10 +1,12 @@
 import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
+import { SESSION_SECRET_ENV } from "./sessionSecret";
 
 export type ExecFileRunner = (
   file: string,
-  args: string[]
+  args: string[],
+  env: Record<string, string | undefined>
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export interface PowerShellBridgeOptions {
@@ -12,22 +14,29 @@ export interface PowerShellBridgeOptions {
   agentExePath: string;
   run?: ExecFileRunner;
   powershellPath?: string;
+  // El secreto efimero de la pipe viaja solo por entorno: nunca por linea de comandos, porque el
+  // command line de un proceso lo puede leer cualquier usuario de la sesion con el explorador/WMI.
+  sessionSecret?: string;
 }
 
 export function createPowerShellBridgeRunner(options: PowerShellBridgeOptions): () => Promise<void> {
   const run = options.run || defaultRunner;
 
   return async () => {
-    const { stdout } = await run(options.powershellPath || "powershell.exe", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      options.scriptPath,
-      "-AgentExe",
-      options.agentExePath,
-    ]);
+    const { stdout } = await run(
+      options.powershellPath || "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        options.scriptPath,
+        "-AgentExe",
+        options.agentExePath,
+      ],
+      { ...(options.sessionSecret ? { [SESSION_SECRET_ENV]: options.sessionSecret } : {}) }
+    );
 
     if (/error|exception/i.test(stdout)) {
       throw new Error(`Session bridge failed: ${stdout.trim()}`);
@@ -53,14 +62,23 @@ export function defaultBridgeScriptPath(): string {
   return candidates[0];
 }
 
-function defaultRunner(file: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+function defaultRunner(
+  file: string,
+  args: string[],
+  extraEnv: Record<string, string | undefined>
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: 30000 }, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-        return;
+    execFile(
+      file,
+      args,
+      { timeout: 30000, env: { ...process.env, ...extraEnv } },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
       }
-      resolve({ stdout: String(stdout), stderr: String(stderr) });
-    });
+    );
   });
 }

@@ -1,5 +1,6 @@
 param(
   [string]$TaskName = "RemoteMonitoringAgent",
+  [string]$TrayTaskName = "RemoteMonitoringAgent-Tray",
   [string]$InstallDir = "$env:ProgramFiles\RemoteMonitoringAgent",
   [string]$ConfigDir = "$env:ProgramData\RemoteMonitoringAgent",
   [switch]$KeepConfig
@@ -9,17 +10,21 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "== Desinstalacion silenciosa del agente =="
 
-try {
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
-  Write-Host "Tarea '$TaskName' removida."
-} catch {
-  & schtasks.exe /delete /f /tn $TaskName 2>$null | Out-Null
+# La bandeja tiene su propia tarea en modo Session 0; en modo logon comparte $TaskName.
+foreach ($name in @($TaskName, $TrayTaskName)) {
+  try {
+    Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
+    Write-Host "Tarea '$name' removida."
+  } catch {
+    & schtasks.exe /delete /f /tn $name 2>$null | Out-Null
+  }
 }
 
 $exePath = Join-Path $InstallDir "agent.exe"
+$trayExePath = Join-Path $InstallDir "RmTray.exe"
 
 Get-Process -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -eq $exePath } |
+  Where-Object { $_.Path -eq $exePath -or $_.Path -eq $trayExePath } |
   Stop-Process -Force
 
 $deadline = (Get-Date).AddSeconds(10)
@@ -55,5 +60,5 @@ if (-not $KeepConfig) {
   }
 }
 
-Write-Host "Agente desinstalado. La tarea $TaskName fue removida."
+Write-Host "Agente desinstalado. Se removieron las tareas $TaskName y $TrayTaskName."
 exit 0

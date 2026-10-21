@@ -4,11 +4,14 @@ import {
   FrameDecoder,
   SessionRequestType,
   SessionResponseHeader,
+  createStatusHeader,
   defaultSessionPipeName,
   encodeFrame,
 } from "./sessionProtocol";
+import { sessionSecretsMatch } from "./sessionSecret";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const HELLO_TIMEOUT_MS = 3000;
 
 export class NoSessionWorkerError extends Error {
   constructor() {
@@ -27,20 +30,30 @@ interface PendingRequest {
 export interface SessionSupervisorOptions {
   pipeName?: string;
   requestTimeoutMs?: number;
+  helloTimeoutMs?: number;
+  secret: string;
   onWorkerChange?: (hasWorker: boolean) => void;
 }
 
 export class SessionSupervisor {
   private readonly pipeName: string;
   private readonly requestTimeoutMs: number;
+  private readonly helloTimeoutMs: number;
+  private readonly secret: string;
   private readonly onWorkerChange?: (hasWorker: boolean) => void;
   private readonly workers = new Set<net.Socket>();
+  private readonly unauthenticated = new Set<net.Socket>();
   private readonly pending = new Map<string, PendingRequest>();
   private server: net.Server | null = null;
 
-  constructor(options: SessionSupervisorOptions = {}) {
+  constructor(options: SessionSupervisorOptions) {
+    if (typeof options.secret !== "string" || options.secret.length < 32) {
+      throw new Error("SessionSupervisor requires a session secret of at least 32 characters");
+    }
     this.pipeName = options.pipeName || defaultSessionPipeName();
     this.requestTimeoutMs = options.requestTimeoutMs || DEFAULT_REQUEST_TIMEOUT_MS;
+    this.helloTimeoutMs = options.helloTimeoutMs || HELLO_TIMEOUT_MS;
+    this.secret = options.secret;
     this.onWorkerChange = options.onWorkerChange;
   }
 
@@ -64,6 +77,8 @@ export class SessionSupervisor {
       pending.reject(new Error("Session supervisor stopped"));
     }
     this.pending.clear();
+    for (const socket of this.unauthenticated) socket.destroy();
+    this.unauthenticated.clear();
     this.workers.clear();
 
     if (this.server) {
@@ -74,6 +89,21 @@ export class SessionSupervisor {
 
   hasLiveWorker(): boolean {
     return this.workers.size > 0;
+  }
+
+  // El supervisor (SYSTEM) no puede escribir en el perfil del usuario; le pasa el estado al worker,
+  // que corre en la sesion interactiva y es quien lo persiste para la bandeja. Fire-and-forget: si
+  // no hay worker conectado, simplemente no hay estado visible hasta que vuelva a aparecer.
+  broadcastStatus(status: Record<string, unknown>): void {
+    if (this.workers.size === 0) return;
+    const frame = encodeFrame(createStatusHeader(randomUUID(), status));
+
+    for (const socket of this.workers) {
+      if (socket.destroyed) continue;
+      socket.write(frame, (error) => {
+        if (error) this.dropWorker(socket);
+      });
+    }
   }
 
   async request(type: SessionRequestType): Promise<unknown> {
@@ -106,17 +136,49 @@ export class SessionSupervisor {
 
   private attachWorker(socket: net.Socket): void {
     const decoder = new FrameDecoder();
-    this.workers.add(socket);
-    this.notifyWorkerChange();
+    let authenticated = false;
+
+    this.unauthenticated.add(socket);
+    const helloTimer = setTimeout(() => {
+      if (!authenticated) this.rejectWorker(socket);
+    }, this.helloTimeoutMs);
+    if (typeof helloTimer.unref === "function") helloTimer.unref();
 
     socket.on("data", (chunk: Buffer) => {
       for (const frame of decoder.push(chunk)) {
+        if (!authenticated) {
+          // Cualquier otro cuadro antes del hello, o un hello con otro secreto, cierra la coneccion:
+          // la pipe es visible desde todas las cuentas del equipo y la unica admision es el secreto.
+          if (frame.header.kind === "hello" && sessionSecretsMatch(this.secret, frame.header.secret)) {
+            authenticated = true;
+            clearTimeout(helloTimer);
+            this.unauthenticated.delete(socket);
+            this.workers.add(socket);
+            this.notifyWorkerChange();
+          } else {
+            this.rejectWorker(socket);
+            return;
+          }
+          continue;
+        }
+
         if (frame.header.kind === "response") this.resolvePending(frame.header, frame.payload);
       }
     });
 
-    socket.on("close", () => this.dropWorker(socket));
-    socket.on("error", () => this.dropWorker(socket));
+    const drop = () => {
+      clearTimeout(helloTimer);
+      this.unauthenticated.delete(socket);
+      this.dropWorker(socket);
+    };
+
+    socket.on("close", drop);
+    socket.on("error", drop);
+  }
+
+  private rejectWorker(socket: net.Socket): void {
+    this.unauthenticated.delete(socket);
+    socket.destroy();
   }
 
   private dropWorker(socket: net.Socket): void {

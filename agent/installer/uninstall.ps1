@@ -9,9 +9,12 @@ $ErrorActionPreference = "Stop"
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
 $exePath = Join-Path $InstallDir "agent.exe"
+$trayExePath = Join-Path $InstallDir "RmTray.exe"
 
-Get-Process -Name "agent" -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -eq $exePath } |
+# El icono de bandeja no tiene boton "Salir" a proposito (es solo un aviso), asi que este script
+# es el unico camino para bajarlo. Se mata por ruta exacta para no tocar otras bandejas del usuario.
+Get-Process -Name "agent", "RmTray" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -eq $exePath -or $_.Path -eq $trayExePath } |
   Stop-Process -Force
 
 $deadline = (Get-Date).AddSeconds(10)

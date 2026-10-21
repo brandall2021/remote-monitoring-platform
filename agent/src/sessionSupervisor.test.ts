@@ -5,9 +5,16 @@ import fs from "fs";
 import { randomUUID } from "crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { NoSessionWorkerError, SessionSupervisor } from "./sessionSupervisor";
-import { FrameDecoder, SessionRequestType, encodeFrame } from "./sessionProtocol";
+import {
+  FrameDecoder,
+  SessionRequestType,
+  createHelloHeader,
+  encodeFrame,
+} from "./sessionProtocol";
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
+
+const SECRET = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
 
 const supervisors: SessionSupervisor[] = [];
 const sockets: net.Socket[] = [];
@@ -19,10 +26,19 @@ function pipePath(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "rmagent-test-")), "session.sock");
 }
 
-async function createSupervisor(options: { requestTimeoutMs?: number; onWorkerChange?: (hasWorker: boolean) => void } = {}) {
+async function createSupervisor(
+  options: {
+    requestTimeoutMs?: number;
+    helloTimeoutMs?: number;
+    secret?: string;
+    onWorkerChange?: (hasWorker: boolean) => void;
+  } = {}
+) {
   const supervisor = new SessionSupervisor({
     pipeName: pipePath(),
+    secret: options.secret || SECRET,
     requestTimeoutMs: options.requestTimeoutMs || 200,
+    helloTimeoutMs: options.helloTimeoutMs,
     onWorkerChange: options.onWorkerChange,
   });
   supervisors.push(supervisor);
@@ -30,26 +46,45 @@ async function createSupervisor(options: { requestTimeoutMs?: number; onWorkerCh
   return supervisor;
 }
 
-function connectWorker(
-  pipe: string,
-  handler?: (type: SessionRequestType, id: string, socket: net.Socket) => void
-): Promise<net.Socket> {
+// El helper deja la coneccion cruda: quien prueba el flujo de autenticacion decide si manda
+// el hello (y con que secreto) o directamente otro cuadro.
+function rawConnect(pipe: string): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(pipe);
     sockets.push(socket);
 
-    const decoder = new FrameDecoder();
-    socket.on("data", (chunk: Buffer) => {
-      for (const frame of decoder.push(chunk)) {
-        if (frame.header.kind === "request" && handler) {
-          handler(frame.header.type, frame.header.id, socket);
-        }
-      }
-    });
-    // On Windows the client-side named-pipe connection can fire just before
-    // the server's connection callback has attached the worker.
     socket.on("connect", () => setTimeout(() => resolve(socket), 10));
     socket.on("error", reject);
+  });
+}
+
+async function connectWorker(
+  pipe: string,
+  handler?: (type: SessionRequestType, id: string, socket: net.Socket) => void,
+  secret: string = SECRET
+): Promise<net.Socket> {
+  const socket = await rawConnect(pipe);
+
+  const decoder = new FrameDecoder();
+  socket.on("data", (chunk: Buffer) => {
+    for (const frame of decoder.push(chunk)) {
+      if (frame.header.kind === "request" && handler) {
+        handler(frame.header.type, frame.header.id, socket);
+      }
+    }
+  });
+
+  socket.write(encodeFrame(createHelloHeader(randomUUID(), secret)));
+  // El supervisor registra el worker en el callback de datos; dejamos girar el event loop.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return socket;
+}
+
+function closed(socket: net.Socket): Promise<void> {
+  return new Promise((resolve) => {
+    if (socket.destroyed) return resolve();
+    socket.once("close", () => resolve());
+    socket.once("end", () => resolve());
   });
 }
 
@@ -59,11 +94,62 @@ afterEach(() => {
 });
 
 describe("SessionSupervisor", () => {
+  it("refuses to start without a session secret", () => {
+    expect(
+      () => new SessionSupervisor({ pipeName: pipePath(), secret: "" })
+    ).toThrow(/at least 32/);
+  });
+
   it("rejects requests when no interactive session is available", async () => {
     const supervisor = await createSupervisor();
 
     expect(supervisor.hasLiveWorker()).toBe(false);
     await expect(supervisor.request("screenshot")).rejects.toBeInstanceOf(NoSessionWorkerError);
+  });
+
+  it("never shows a request to a connection that did not authenticate", async () => {
+    const supervisor = await createSupervisor();
+    const pipe = supervisor["pipeName"];
+
+    let sawRequest = false;
+    const intruder = await rawConnect(pipe);
+    const decoder = new FrameDecoder();
+    intruder.on("data", (chunk: Buffer) => {
+      for (const frame of decoder.push(chunk)) {
+        if (frame.header.kind === "request") sawRequest = true;
+      }
+    });
+
+    await expect(supervisor.request("ping")).rejects.toBeInstanceOf(NoSessionWorkerError);
+    expect(supervisor.hasLiveWorker()).toBe(false);
+    expect(sawRequest).toBe(false);
+  });
+
+  it("drops a connection that presents the wrong secret", async () => {
+    const supervisor = await createSupervisor();
+
+    const intruder = await connectWorker(supervisor["pipeName"], undefined, "a".repeat(SECRET.length));
+    await expect(closed(intruder)).resolves.toBeUndefined();
+
+    expect(supervisor.hasLiveWorker()).toBe(false);
+  });
+
+  it("drops a connection that answers with a request instead of a hello", async () => {
+    const supervisor = await createSupervisor();
+    const socket = await rawConnect(supervisor["pipeName"]);
+
+    socket.write(encodeFrame({ id: "x", kind: "request", type: "ping" }));
+
+    await expect(closed(socket)).resolves.toBeUndefined();
+    expect(supervisor.hasLiveWorker()).toBe(false);
+  });
+
+  it("closes a silent connection once the hello window expires", async () => {
+    const supervisor = await createSupervisor({ helloTimeoutMs: 40 });
+    const socket = await rawConnect(supervisor["pipeName"]);
+
+    await expect(closed(socket)).resolves.toBeUndefined();
+    expect(supervisor.hasLiveWorker()).toBe(false);
   });
 
   it("proxies a live frame to the worker as raw bytes", async () => {
@@ -123,7 +209,6 @@ describe("SessionSupervisor", () => {
     const supervisor = await createSupervisor({ onWorkerChange: (hasWorker) => states.push(hasWorker) });
 
     const worker = await connectWorker(supervisor["pipeName"]);
-    await new Promise((resolve) => setImmediate(resolve));
     expect(supervisor.hasLiveWorker()).toBe(true);
 
     worker.destroy();
