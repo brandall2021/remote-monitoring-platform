@@ -475,6 +475,71 @@ comentario), balance de llaves y anidación revisados a mano en ambos archivos. 
 correr localmente** (no hay nginx ni Docker en esta máquina); queda como verificación pendiente en el
 proximo build de Dokploy, donde ahora forma parte del build.
 
+**Verificación cerrada el 2026-10-22.** El build de Dokploy terminó con `RUN nginx -t` ✅ y el contenedor
+llegó a ejecutarse, o sea que la config de nginx del D-1 quedó sana. El fallo se corrió de paso, no de
+familia: ahora el crash-loop venía de `npx prisma migrate deploy`.
+
+**D-2 (despliegue, 2026-10-22): la base existente no estaba baseliniada y `migrate deploy` tumbaba el
+contenedor.** El log del servicio mostraba, después de `1 migration found in prisma/migrations`:
+
+```
+Error: P3005
+The database schema is not empty.
+```
+
+La causa es histórica y estaba cantada: hasta `feef1fb` el `CMD` de la imagen combinada ejecutaba
+**`npx prisma db push`**, que crea las tablas sin dejar registro en `_prisma_migrations`. Al cambiar a
+`migrate deploy` (decisión correcta, ver la sección 10), la base `monitor` que ya estaba en Dokploy pasó
+a ser "no vacía sin historial" y Prisma se niega a arrancar. Con el `CMD` encadenado con `&&`, esto mata
+al contenedor otra vez y el dominio vuelve a 502 — mismo síntoma que D-1, otro paso.
+
+**Firma de diagnóstico (útil para no confundirlo con un problema de red).** `/` alternando 200 y 502
+entre requests consecutivos, con `/api/health` siempre en 502. nginx vive los pocos segundos que tarda
+`migrate deploy` en fallar; Node nunca llega a escuchar. Medido el 2026-10-22 con 8 pairs de requests:
+`502/502, 200/502, 502/502, 200/502, 502/502, 502/502, 502/502, 502/502`.
+
+**Arreglo.** Dos partes.
+
+1. **`docker-entrypoint.sh` (nuevo) reemplaza la cadena `&&` del `CMD`.** Cada paso se anuncia
+   (`[entrypoint] nginx`, `[entrypoint] prisma migrate deploy`, `esquema OK`, `seed`, `API en el puerto`),
+   el fallo de P3005 imprime la instrucción exacta, y Node corre con `exec` para recibir el SIGTERM en
+   lugar del shell. Con esto el log deja de ser un `npm notice` tapando el error real.
+2. **`PRISMA_BASELINE=1` como camino de recuperación.** El entrypoint solo baselinia si (a) `migrate
+   deploy` ya falló y (b) la variable está puesta; hace `migrate resolve --applied 20260810000000_init` y
+   reintenta el deploy. Elegí una variable en vez de baseliniar siempre porque `resolve --applied` sobre
+   una base **vacía** registra la migracion como aplicada sin crear las tablas: el deploy siguiente no
+   hace nada y el seed revienta contra `users` inexistente, dejando la base inutilizable. Con la guarda,
+   sobre base vacia `migrate deploy` tiene éxito y el bloque ni se ejecuta. Tampoco lo puse en el `CMD`
+   por defecto por la misma razon: tiene que ser un gesto explicito y de una sola vez.
+
+**Por qué baseliniar es seguro acá (verificado antes de recomendarlo).** Comparé `server/prisma/schema.prisma`
+contra `server/prisma/migrations/20260810000000_init/migration.sql`: 9 modelos ↔ 9 `CREATE TABLE`, 4 enums
+↔ 4 `CREATE TYPE`, 0 columnas del schema fuera de la migración. `schema.prisma` no cambia desde `6e652d1`
+(2026-08-10) y la migración `init` se escribió justamente sobre ese schema (reemplazando a
+`20260810_add_device_alias`). Como la última imagen que levantó en Dokploy hacía `db push` con ese mismo
+schema, la base real coincide con la migración: baseliniar no deja columnas ni tablas faltantes.
+
+**Verificación del entrypoint.** `sh -n` sin errores, sin bashismos, y 0 retornos de carro (un shebang con
+CRLF en alpine da `no such file or directory`). Como no hay Docker en esta máquina, se corrió con un
+harness de stubs en `%TEMP%` (`nginx`/`npx`/`node` falsos controlados por variables de entorno) sobre seis
+caminos: (A) arranque limpio → `esquema OK` + seed + server, exit 0; (B) P3005 sin flag → aviso de 4 líneas
+y exit 1, sin tocar el seed; (C) P3005 con `PRISMA_BASELINE=1` → `resolve --applied`, reintento, `esquema OK
+(baseliniado)`, seed, server, exit 0; (D) seed que devuelve 1 → exit 1 antes de la API; (E) nginx que
+devuelve 1 → exit 1 declarado en el paso nginx; (F) deploy que sigue fallando después del baseline → exit 1
+con el mensaje de P3008, sin llegar al seed. Los caminos D/E/F eran agujeros reales del primer borrador del
+script (sin `set -e`, un seed roto dejaba arrancar la API); quedaron gateados con `|| { …; exit 1; }`.
+
+**Lo que NO cierra este cambio.** `server/Dockerfile` (el path del compose) sigue con
+`CMD ["sh","-c","npx prisma migrate deploy && node dist/server.js"]`: tiene el mismo punto único de fallo
+y no leyó el aviso. Queda así a propósito porque el despliegue vivo usa la imagen combinada de la raíz y
+no voy a tocar el otro arranque sin poder probarlo. Falta verificación en el despliegue real: que el build
+de Dokploy copie el script, que `chmod +x` alcance (el repo lo trae con modo no-ejecutable de Windows y el
+`RUN` lo corrige en la imagen) y que el log muestre los `[entrypoint]`.
+
+**Secuela obligada.** Después del baseline, el arranque corre el seed y la API. Como el deploy anterior
+ya cambió los refresh tokens a digesto SHA-256, las sesiones viejas en claro siguen sin matchear:
+`TRUNCATE refresh_tokens;` desde la terminal del servicio de PostgreSQL de Dokploy, o volver a loguearse.
+
 ---
 
 ## 13. Mejora de la vista en vivo (2026-10-21): de un JPEG por round-trip a una corriente

@@ -37,8 +37,8 @@ RUN mkdir -p /app/uploads/screenshots
 COPY nginx.conf /etc/nginx/nginx.conf
 
 # Validar la config en el build. Sin esto, una directiva mal escrita (o un map fuera de contexto)
-# recién se ve en produccion: nginx falla con [emerg], el CMD encadenado con && muere con el PID 1
-# y el contenedor entra en crash-loop con 502 en todo el dominio.
+# recién se ve en produccion: nginx falla con [emerg], el arranque muere con el PID 1 (o deja la API
+# sin proxy) y el contenedor entra en crash-loop con 502 en todo el dominio.
 RUN nginx -t
 
 EXPOSE 80 3000
@@ -47,6 +47,16 @@ EXPOSE 80 3000
 # _prisma_migrations, así que dos contenedores con imágenes distintas pueden dejar la base en un
 # estado que nadie puede reproducir. El seed es idempotente y no pisa contraseñas existentes.
 #
-# Si esta base ya se creó con "db push", hay que baseliniar UNA vez antes del primer deploy:
-#   npx prisma migrate resolve --applied 20260810000000_init
-CMD ["sh", "-c", "nginx && npx prisma migrate deploy && node dist/prisma/seed.js && node dist/server.js"]
+# El arranque vive en docker-entrypoint.sh, no en una cadena && del CMD: con la cadena, un error de
+# Prisma o del seed mataba al contenedor entero y Traefik devolvía 502 en todo el dominio.
+#
+# Si esta base ya se creó con "db push", migrate deploy falla con P3005 ("schema is not empty") y
+# hay que baseliniar UNA vez. Dos caminos, el primero no depende de la UI de Dokploy:
+#   a) agregar PRISMA_BASELINE=1 al servicio, redeployar una vez, y quitarla (el entrypoint hace el
+#      `migrate resolve --applied` y reintenta el deploy); o
+#   b) correr a mano en el contenedor:
+#        npx prisma migrate resolve --applied 20260810000000_init
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+CMD ["/app/docker-entrypoint.sh"]

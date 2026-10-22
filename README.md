@@ -154,13 +154,26 @@ En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com
   la credencial que pusiste sigue vigente. (Aun se aplica el `admin123` historico si la base la creo
   el seed viejo: rotarla desde el panel una vez.)
 
-> El CMD del contenedor ejecuta en cada arranque: `nginx && npx prisma migrate deploy && node dist/prisma/seed.js && node dist/server.js`.
+> El contenedor arranca con `docker-entrypoint.sh`: levanta nginx, corre `npx prisma migrate deploy`,
+> corre el seed y por ultimo `node dist/server.js` (con `exec`, para que Node reciba el SIGTERM). Cada
+> paso se imprime en el log y un fallo de Prisma o del seed ya no se lleva puesto a nginx.
 > El seed crea los 3 roles (`SUPER_ADMIN`, `ADMIN`, `OPERATOR`) y el usuario admin solo la primera
 > vez; en los arranques siguientes reconcilia nombre y apellido, nunca `passwordHash`.
 >
-> `migrate deploy` requiere la tabla `_prisma_migrations`. Si tu base se armo con `prisma db push`,
-> hacele un baseline una sola vez:
-> `docker exec -it <contenedor> npx prisma migrate resolve --applied 20260810000000_init`
+> `migrate deploy` requiere la tabla `_prisma_migrations`. Si tu base se armo con `prisma db push`
+> (era el CMD de las imagenes anteriores), falla con **P3005 - The database schema is not empty** y
+> hay que baseliniar una sola vez. Dos caminos:
+>
+> 1. **Con una variable, sin tocar la UI ni pelear con el crash-loop:** agregá `PRISMA_BASELINE=1` al
+>    servicio, redeployá, y en el log tiene que aparecer `marco 20260810000000_init como aplicada`
+>    seguido de `esquema OK`. Después **quitá** la variable y redeployá.
+> 2. **A mano, si el contenedor se puede abrir:** `docker exec -it <contenedor> sh` y adentro
+>    `npx prisma migrate resolve --applied 20260810000000_init` (en Dokploy es la pestaña Terminal del
+>    servicio; con crash-loop de pocos segundos suele no dar el tiempo, usá el camino 1).
+>
+> Baseliniar no toca los datos: solo registra en `_prisma_migrations` que la migracion inicial ya esta
+> aplicada. Es seguro mientras el esquema de la base coincida con `server/prisma/schema.prisma`, que
+> es el caso porque la ultima imagen que levanto usaba `db push` con ese mismo schema.
 
 > **Este deploy desconecta las sesiones abiertas.** Los refresh tokens ahora se guardan como
 > digesto SHA-256; los renglones viejos (en claro) ya no matchean y cada usuario vuelve a loguearse
@@ -174,6 +187,7 @@ En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com
 | Variable | Requerida | Descripcion | Valor por defecto |
 |----------|:---------:|-------------|-------------------|
 | `DATABASE_URL` | Si | Cadena de conexion PostgreSQL (servicio Dokploy) | - |
+| `PRISMA_BASELINE` | No | Solo la lee `docker-entrypoint.sh`: con `1` marca la migracion inicial como aplicada cuando `migrate deploy` falla con P3005. Se usa un unico deploy y se quita | vacio (desactivado) |
 | `REDIS_URL` | No | Cadena de conexion Redis. Hoy el server no la usa; hace falta si corras mas de una replica e instales `@socket.io/redis-adapter` | `redis://localhost:6379` |
 | `JWT_SECRET` | Si | Secret para firmar JWT (min 32 chars). Sin valor o con valor de ejemplo, el server **no arranca** en produccion | - |
 | `JWT_REFRESH_SECRET` | Si | Secret para refresh tokens (min 32 chars), tiene que ser distinto del anterior | - |
@@ -591,7 +605,7 @@ remote-monitoring-platform/
 | Video grabado corto | Solo aplicaba a builds previos al fix del "pump" de redibujado (commit `0e3b93d`) |
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |
 | El contenedor no arranca: `JWT_SECRET no está definido` | Fail-fast intencional. Definir `JWT_SECRET`, `JWT_REFRESH_SECRET` y `AGENT_REGISTRATION_TOKEN` (`openssl rand -hex 32`); los valores de ejemplo (`change-this`, `secret`) tambien se rechazan |
-| El dominio devuelve 502 en todo (tambien en `/`) y el contenedor hace crash-loop | El `CMD` de la imagen combinada encadena `nginx && migrate && seed && server`, asi que cualquier fallo se lleva a nginx y el 502 no es solo de la API. Ver el log de arranque: `nginx: [emerg] unknown directive ...` es config invalida (los builds ahora corren `nginx -t` para que eso explote en el build, no en produccion); `P3005` / `relation "User" already exists` es base creada con `db push`, baselinear una vez con `npx prisma migrate resolve --applied 20260810000000_init` |
+| El dominio devuelve 502 y el contenedor hace crash-loop. Firma tipica: `/` alterna 200 y 502 entre requests, `/api/health` siempre 502 | Esa alternancia es nginx vivo durante los segundos que tarda el resto del arranque en morir, o sea: el contenedor esta en crash-loop y el 502 no es de la API ni de la red. Leé el log de arranque, ahora cada paso se anuncia con `[entrypoint]`: `nginx: [emerg] unknown directive ...` es config invalida (los builds corren `nginx -t` para que explote en el build, no en produccion); `Error: P3005 / The database schema is not empty` es base creada con `db push`, se arregla con un deploy de `PRISMA_BASELINE=1` (ver Paso 6) o con `npx prisma migrate resolve --applied 20260810000000_init` dentro del contenedor |
 | El panel no carga pero la API responde | El dominio esta apuntando al puerto 3000 (Express) en vez del 80 (nginx). nginx es el que sirve el `dist/` de la SPA y hace proxy de `/api` y `/socket.io` |
 | Las capturas desaparecen despues de un redeploy | En el despliegue tipo "Docker" montarle un volumen en `/app/uploads/screenshots`; la imagen solo hace `mkdir`, el volumen named existe nada mas en `docker-compose.dokploy.yml` |
 | Las capturas salen rotas / en negro | Ahora se piden autenticadas (`/api/screenshots/:id/image`). Revisar que el token no haya expirado y que el rol tenga `SCREENSHOTS_VIEW`; `nginx` ya no sirve `/uploads` |
