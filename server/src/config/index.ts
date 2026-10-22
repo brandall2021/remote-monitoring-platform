@@ -72,8 +72,11 @@ export const config = {
     // socket.io venía con el default de 1 MB por mensaje: los frames JPEG del live view de una
     // pantalla grande lo pasan y se truncaban. Es también la cota de memoria por conexión.
     maxHttpBufferSize: parseInt(process.env.WS_MAX_BUFFER_BYTES || String(16 * 1024 * 1024), 10),
-    pingIntervalMs: parseInt(process.env.WS_PING_INTERVAL_MS || "10000", 10),
-    pingTimeoutMs: parseInt(process.env.WS_PING_TIMEOUT_MS || "5000", 10),
+    pingIntervalMs: parseInt(process.env.WS_PING_INTERVAL_MS || "25000", 10),
+    // Estaba en 5 s: con el live view subiendo cuadros por el mismo canal, un pong que tarda 6 s en
+    // volver ya cortaba la conexion y el equipo aparecia OFFLINE. 20 s es el default de socket.io y
+    // deja aire sin esconder una caida real (el heartbeat de 30 s del agente sigue mandando la senal).
+    pingTimeoutMs: parseInt(process.env.WS_PING_TIMEOUT_MS || "20000", 10),
     // Caducidad del estado de "online": el agente reporta heartbeat cada 30 s, así que 3 latidos
     // perdidos recién deberían marcar el equipo como apagado.
     offlineAfterMs: parseInt(process.env.DEVICE_OFFLINE_AFTER_MS || String(3 * 60 * 1000), 10),

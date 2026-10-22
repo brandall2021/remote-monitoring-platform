@@ -60,8 +60,10 @@ export default function DeviceDetailPage() {
   const [liveActive, setLiveActive] = useState(false);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
-  const [liveIntervalMs, setLiveIntervalMs] = useState(2000);
-  const liveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [liveIntervalMs, setLiveIntervalMs] = useState(1000);
+  const [liveFps, setLiveFps] = useState(0);
+  const fpsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const frameCountRef = useRef(0);
   const [recording, setRecording] = useState(false);
   const recordingRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -116,6 +118,7 @@ export default function DeviceDetailPage() {
     ) => {
       if (meta?.deviceId !== id) return;
       const mimeType = meta.mimeType || "image/jpeg";
+      frameCountRef.current += 1;
       const url = URL.createObjectURL(new Blob([payload], { type: mimeType }));
       releaseFrameUrl();
       frameUrlRef.current = url;
@@ -147,20 +150,28 @@ export default function DeviceDetailPage() {
     setLiveActive(true);
     setLiveFrame(null);
     setLiveError(null);
-    socket.emit("live-view-frame", { deviceId: id });
-    liveTimerRef.current = setInterval(() => {
-      socket.emit("live-view-frame", { deviceId: id });
-    }, liveIntervalMs);
+    // Una sola suscripcion: el server arma la corriente en el agente y de aca no sale un pedido por
+    // cuadro. Antes este setInterval era el que fijaba el ritmo, y un tab en segundo plano (donde el
+    // navegador baja los timers a 1/min) cortaba la vista por completo.
+    socket.emit("live-view-start", { deviceId: id, intervalMs: liveIntervalMs });
+
+    frameCountRef.current = 0;
+    if (fpsTimerRef.current) clearInterval(fpsTimerRef.current);
+    fpsTimerRef.current = setInterval(() => {
+      setLiveFps(frameCountRef.current);
+      frameCountRef.current = 0;
+    }, 1000);
   }, [id, liveIntervalMs]);
 
   const stopLiveView = useCallback(() => {
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       recorderRef.current.stop();
     }
-    if (liveTimerRef.current) {
-      clearInterval(liveTimerRef.current);
-      liveTimerRef.current = null;
+    if (fpsTimerRef.current) {
+      clearInterval(fpsTimerRef.current);
+      fpsTimerRef.current = null;
     }
+    setLiveFps(0);
     const token = getAccessToken();
     if (token) getAdminSocket().emit("stop-live-view", { deviceId: id });
     setLiveActive(false);
@@ -171,15 +182,11 @@ export default function DeviceDetailPage() {
   const changeLiveInterval = useCallback(
     (ms: number) => {
       setLiveIntervalMs(ms);
-      if (!liveActive || !liveTimerRef.current) return;
+      if (!liveActive) return;
       const token = getAccessToken();
       if (!token || !id) return;
-      const socket = getAdminSocket();
-      clearInterval(liveTimerRef.current);
-      socket.emit("live-view-frame", { deviceId: id });
-      liveTimerRef.current = setInterval(() => {
-        socket.emit("live-view-frame", { deviceId: id });
-      }, ms);
+      // Reenviar la suscripcion ajusta la corriente del agente; no hace falta re-conectar nada.
+      getAdminSocket().emit("live-view-start", { deviceId: id, intervalMs: ms });
     },
     [liveActive, id]
   );
@@ -276,7 +283,8 @@ export default function DeviceDetailPage() {
       if (recorderRef.current && recorderRef.current.state !== "inactive") {
         recorderRef.current.stop();
       }
-      if (liveTimerRef.current) clearInterval(liveTimerRef.current);
+      if (fpsTimerRef.current) clearInterval(fpsTimerRef.current);
+      if (recordingPumpRef.current) clearInterval(recordingPumpRef.current);
       const token = getAccessToken();
       if (token && id) getAdminSocket().emit("stop-live-view", { deviceId: id });
     },
@@ -541,13 +549,16 @@ return (
                   onChange={(e) => changeLiveInterval(Number(e.target.value))}
                   sx={{ minWidth: 90, fontSize: "0.8125rem" }}
                 >
+                  <MenuItem value={250}>0,25 s</MenuItem>
                   <MenuItem value={1000}>1 s</MenuItem>
                   <MenuItem value={2000}>2 s</MenuItem>
                   <MenuItem value={5000}>5 s</MenuItem>
                 </Select>
                 <CircularProgress size={14} sx={{ color: "success.main" }} />
                 <Typography variant="caption" color="text.secondary">
-                  Actualizando...
+                  {/* El contador es el termometro real: si baja de 1 cuadro/s el cuello esta en la
+                      captura o en el uplink, no en el panel. */}
+                  {liveFps > 0 ? `${liveFps} ${liveFps === 1 ? "cuadro" : "cuadros"}/s` : "Actualizando..."}
                 </Typography>
               </Box>
             </Box>

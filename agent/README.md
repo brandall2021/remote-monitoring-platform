@@ -328,8 +328,24 @@ un error explicito en vez de una imagen en negro.
 
 ## Vista en vivo
 
-- La web pide frames por WebSocket (`live-view-frame`), el server retransmite al agente (`live-command`) y el agente responde con un JPEG (`live-frame-result`).
-- Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing), usando todos los monitores en Windows 10/11.
+- Con el build actual el agente **produce solo**: el server manda `live-start` con el intervalo pedido
+  y el agente emite `live-frame-result` en un loop que programa el cuadro siguiente cuando termina el
+  anterior. No hay un round-trip por frame, y un `live-stop` (o la caida del WebSocket) apaga la captura.
+- Con agentes viejos el server baja a modo `poll`: sigue mandando un `live-command` por cuadro y el
+  agente responde uno a uno. Los dos modos conviven; el server elige segun el `liveProtocol` del handshake.
+- Cada cuadro lo captura un **worker persistente**: se levanta un unico `powershell.exe` mientras hay
+  espectadores, el agente le manda `g` por stdin y recibe el JPEG por stdout (4 bytes de longitud +
+  bytes). Medido con dos monitores (pantalla virtual 3360x1080): **~150 ms por cuadro de 66 KB**, tope
+  de **~6 cuadros/s**. El ritmo se puede pedir desde el panel hasta 0,25 s por cuadro.
+- El cuadro se captura con PowerShell/System.Drawing a **1280 px de ancho y calidad JPEG 70**
+  (`LIVE_MAX_WIDTH` / `LIVE_JPEG_QUALITY`), usando todos los monitores en Windows 10/11. A resolucion
+  nativa un panel 2K/4K son varios MB por cuadro y eso corta la conexion.
+- Si PowerShell no arranca, muere, o tarda mas de 8 s en responder, el agente **degrada a la captura por
+  proceso** (`screenshot-desktop` + re-encode en JS, ~720 ms; y si eso falla, `powershell.exe` por cuadro,
+  ~1400 ms) en vez de dejar el panel negro. El log del servicio muestra `[LIVE-WORKER]` con el motivo.
+- El worker se cierra con `live-stop`, con la caida del WebSocket, al apagar el agente, y por timeout de
+  inactividad (70 s sin pedidos) como red de seguridad. No queda ningun `powershell.exe` capturando
+  pantalla despues de cerrar el panel.
 - Los frames **no se guardan en la base de datos** ni como archivos; solo viven en memoria del navegador.
 
 ---
@@ -341,9 +357,12 @@ agent/
 ├── src/
 │   ├── agent.ts               # Entry point (comandos + vista en vivo + estado)
 │   ├── agentStatus.ts         # status.json: allowlist de campos, escritura atomica
-│   ├── commands.ts            # Ejecucion de comandos y captura de frames
+│   ├── commands.ts            # Ejecucion de comandos y eleccion de la ruta de captura
 │   ├── config.ts              # Configuracion local
 │   ├── imageSize.ts           # Parser de cabeceras PNG/JPEG (dimensiones reales)
+│   ├── jpegResize.ts          # Re-encode JPEG puro en JS (jpeg-js), sin nativos para pkg
+│   ├── liveCaptureWorker.ts   # Worker persistente de captura: PowerShell por stdin/stdout
+│   ├── liveStream.ts          # Ritmo del streaming y ajustes de captura (logica pura)
 │   ├── role.ts                # Resolucion del rol (standalone/supervisor/session)
 │   ├── sessionProtocol.ts     # Framing binario del named pipe (request/response/status)
 │   ├── sessionSupervisor.ts   # Lado Session 0: pipe + proxy de pedidos + push de estado
@@ -376,7 +395,10 @@ agent/
 | No conecta | Verificar `serverUrl`/token en la config, el firewall y revisar los reintentos del agente |
 | Aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
 | Screenshot falla | En modo `standalone` el agente debe correr en la sesion interactiva del usuario. En modo `supervisor` no hay session worker: verificar que haya un usuario logueado |
-| Vista en vivo no muestra frames | Usar el build con soporte `live-command` (`agent-live.exe`) |
+| Vista en vivo no muestra frames | El server indica `(live: stream|poll)` al conectar el agente. `poll` = build viejo: hace falta reinstalar con el `agent-live.exe` actualizado para la corriente continua |
+| Vista en vivo a saltos | Bajar `LIVE_MAX_WIDTH` (ej. 1024) o el ritmo desde el panel. Si aun asi va lento, mira si el log dice `[LIVE-WORKER] worker inestable`: con el worker caido el agente usa la ruta de ~720-1400 ms por cuadro en vez de ~150 ms. Tambien puede ser CPU/discos del PC al tope o uplink saturado |
+| El log dice `[LIVE-WORKER] desactivado` | PowerShell no arranca o murio 5 veces en 5 minutos (sesion sin escritorio, driver de video, pantalla con DRM). El live view sigue funcionando por la ruta lenta hasta reiniciar el servicio |
+| Queda un `powershell.exe` consumiendo CPU despues de cerrar el panel | No deberia: el worker se cierra con `live-stop`, con el WebSocket, al salir el agente y a los 70 s de inactividad. Si pasa, fijar `LIVE_CAPTURE_WORKER=0` y reportar el log |
 | El icono de bandeja no aparece | En modo Session 0 depende de la tarea `RemoteMonitoringAgent-Tray`: `schtasks /query /tn RemoteMonitoringAgent-Tray`. En modo logon, que `RmTray.exe` este junto a `agent.exe` en la carpeta de instalacion |
 | El icono queda gris o "sin datos del agente" | `status.json` no llega. En Session 0 eso significa que no hay worker autenticado en la pipe (nadie logueado, o el worker rechazo el secreto). Mirar `%LOCALAPPDATA%\RemoteMonitoringAgent\status.json` y `%ProgramData%\RemoteMonitoringAgent\status.json` |
 | El icono muestra "Sin conexion" rojo | El supervisor esta corriendo pero perdio el WebSocket: revisar `lastError` en `status.json`, firewall y que el server este arriba |

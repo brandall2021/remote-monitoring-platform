@@ -9,6 +9,7 @@ import {
   encodeFrame,
 } from "./sessionProtocol";
 import { takeLiveFrame, takeScreenshot } from "./commands";
+import { stopLiveCaptureWorker } from "./liveCaptureWorker";
 import { writeAgentStatus } from "./agentStatus";
 
 export interface SessionWorkerOptions {
@@ -47,6 +48,9 @@ export class SessionWorker {
       this.socket.destroy();
       this.socket = null;
     }
+    // Este proceso es el dueno del powershell.exe que captura la pantalla del usuario; si muere sin
+    // cerrarlo, el hijo queda vivo siguiendo la captura hasta que Windows lo borre.
+    stopLiveCaptureWorker();
   }
 
   private connect(): void {

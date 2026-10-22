@@ -7,6 +7,7 @@ import { verifyAccessToken } from "../security/jwt";
 import { hasPermission } from "../security/permissions";
 import { safeCompare } from "../security/tokens";
 import { canExecute, isAllowedCommandType } from "./commandPolicy";
+import { LiveMode, LiveStreamScheduler, resolveLiveMode } from "./liveSessions";
 import { detectImage } from "../lib/image";
 import { deviceService } from "../services/device.service";
 import { commandService } from "../services/command.service";
@@ -23,6 +24,7 @@ export interface AdminSocket extends Socket {
 
 interface AgentSocket extends Socket {
   deviceId?: string;
+  liveMode?: LiveMode;
 }
 
 let agentNamespace: Namespace | null = null;
@@ -84,6 +86,19 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
   const adminNamespace = io.of("/admin");
   const agentNs = io.of("/agent");
   agentNamespace = agentNs;
+
+  // ---- Vista en vivo: una sola corriente por dispositivo -----------------------------------
+  // La logica vive en liveSessions.ts, que es la parte que se prueba con timers falsos. Aca solo se
+  // enchufa al namespace. agentSockets queda aca porque hay que comparar la identidad del socket
+  // antes de limpiar: tras una reconexion, el disconnect del viejo llega despues del connect nuevo.
+  const agentSockets = new Map<string, AgentSocket>();
+  const live = new LiveStreamScheduler({
+    send: (deviceId, event, payload) => agentNs.to(deviceId).emit(event, payload),
+    onStall: (deviceId) => console.warn(`[LIVE] Corriente cortada en ${deviceId}, se reactiva`),
+  });
+  // Al cerrar el server HTTP (shutdown del proceso) se apagan los timers de vista en vivo y se avisa
+  // live-stop a cada agente, en vez de dejar corrientes colgadas hasta que la conexion muera.
+  server.once("close", () => live.dispose());
 
   adminNamespace.use(async (socket: AdminSocket, next) => {
     try {
@@ -234,34 +249,54 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
 
     // Ver el escritorio en vivo es más invasivo que ver una captura guardada: exige el permiso con
     // el que se dispara la captura (SCREENSHOTS_REQUEST), no solo SCREENSHOTS_VIEW.
-    socket.on("live-view-frame", (data: { deviceId?: string }) => {
+    const registerLiveViewer = (data: { deviceId?: string; intervalMs?: unknown }) => {
       if (!data?.deviceId) return;
       if (!requireAdminPermission(socket, Permission.SCREENSHOTS_REQUEST, "live-view")) return;
+
       socket.join(`live:${data.deviceId}`);
-      agentNs.to(data.deviceId).emit("live-command");
-      void writeAuditLog({
-        userId: socket.userId,
-        action: "WS_LIVE_VIEW_START",
-        resource: "device",
-        resourceId: data.deviceId,
-      });
-    });
+      const firstViewer = live.addViewer(data.deviceId, socket.id, data.intervalMs);
+
+      // Con la corriente continua el arranque pasa una sola vez por dispositivo, no una por cuadro:
+      // el log de auditoria deja de rellenarse con la misma accion cada 2 segundos.
+      if (firstViewer) {
+        void writeAuditLog({
+          userId: socket.userId,
+          action: "WS_LIVE_VIEW_START",
+          resource: "device",
+          resourceId: data.deviceId,
+        });
+      }
+    };
+
+    // "live-view-frame" era el evento del cliente viejo, que pedía un cuadro por tick. Como registro de
+    // espectador es idempotente, asi que un navegador con el bundle cacheado sigue funcionando.
+    socket.on("live-view-start", registerLiveViewer);
+    socket.on("live-view-frame", registerLiveViewer);
 
     socket.on("stop-live-view", (data: { deviceId?: string }) => {
       if (!data?.deviceId) return;
       socket.leave(`live:${data.deviceId}`);
+      live.removeViewer(socket.id, data.deviceId);
     });
 
     socket.on("disconnect", () => {
       console.log(`[ADMIN] Disconnected: ${socket.userId}`);
+      // Cerrar la pestana tiene que apagar la corriente: si no, el agente sigue capturando y subiendo
+      // cuadros que nadie mira.
+      live.removeViewer(socket.id);
     });
   });
 
   agentNs.on("connection", async (socket: AgentSocket) => {
     const deviceId = socket.deviceId!;
-    console.log(`[AGENT] Connected: ${deviceId}`);
+    socket.liveMode = resolveLiveMode(socket.handshake.auth?.liveProtocol);
+    console.log(`[AGENT] Connected: ${deviceId} (live: ${socket.liveMode})`);
 
     socket.join(deviceId);
+    agentSockets.set(deviceId, socket);
+    // Si un panel dejo la vista en vivo abierta mientras el agente se caia y volvia, agentConnected
+    // reanuda la corriente: los espectadores siguen anotados, solo faltaba el productor.
+    live.agentConnected(deviceId, socket.liveMode ?? "poll");
 
     const device = await prisma.device.findUnique({
       where: { id: deviceId },
@@ -355,8 +390,9 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
         // Cota por frame: sin ella, un agente comprometido puede mandar buffers enormes a todas las
         // salas de live view conectadas.
         if (buffer.length > config.websocket.maxHttpBufferSize) return;
-        // Si ningún panel está escuchando, el frame se descarta sin reserializar ni difundir.
-        if (adminNamespace.sockets.size === 0) return;
+        // onFrame registra la llegada (lo usa el watchdog) y dice si vale la pena retransmitir: sin
+        // espectadores en la sala de este equipo, el frame se descarta sin reserializar ni difundir.
+        if (!live.onFrame(deviceId)) return;
 
         adminNamespace.to(`live:${deviceId}`).emit("live-frame", buffer, {
           deviceId,
@@ -376,6 +412,14 @@ export function setupWebSocket(server: HttpServer): SocketIOServer {
 
     socket.on("disconnect", async () => {
       console.log(`[AGENT] Disconnected: ${deviceId}`);
+
+      // Solo si esta conexion sigue siendo la activa: tras una reconexion, el "disconnect" del socket
+      // viejo llega despues de que el nuevo se registro, y borrarlo romperia la vista en vivo.
+      if (agentSockets.get(deviceId) === socket) {
+        agentSockets.delete(deviceId);
+        live.agentDisconnected(deviceId);
+      }
+
       const current = await prisma.device.findUnique({
         where: { id: deviceId },
         select: { status: true },

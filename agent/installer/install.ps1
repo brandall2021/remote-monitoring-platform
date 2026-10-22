@@ -103,7 +103,7 @@ if (-not (Test-Path -LiteralPath $configPath)) {
   Write-ConfigNoBom -Path $configPath -Config @{
     serverUrl = $ServerUrl.TrimEnd('/')
     registrationToken = $RegistrationToken
-    agentVersion = "1.0.0"
+    agentVersion = "1.1.0"
     heartbeatInterval = 30000
   }
 }

@@ -13,6 +13,8 @@ import {
   logout,
 } from "./commands";
 import { AgentRole, resolveRole } from "./role";
+import { clampLiveInterval, nextFrameDelayMs } from "./liveStream";
+import { stopLiveCaptureWorker } from "./liveCaptureWorker";
 import { SessionSupervisor } from "./sessionSupervisor";
 import { SessionBridge } from "./sessionBridge";
 import { SessionWorker } from "./sessionWorker";
@@ -51,6 +53,11 @@ let socket: Socket | null = null;
 let config: AgentConfig | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 let isCapturing = false;
+// Streaming de vista en vivo: cuando el server manda "live-start", el agente produce cuadros solo,
+// con su propio ritmo. "live-command" sigue atendiendo de a un cuadro, para servers viejos.
+let liveStreaming = false;
+let liveStreamTimer: NodeJS.Timeout | null = null;
+let liveStreamIntervalMs = 1000;
 let role: AgentRole = "standalone";
 let supervisor: SessionSupervisor | null = null;
 let sessionBridge: SessionBridge | null = null;
@@ -77,7 +84,7 @@ async function registerDevice(serverUrl: string, registrationToken: string): Pro
         ? sysInfo.networkInterfaces[0].mac
         : undefined,
     platform: sysInfo.platform,
-    agentVersion: process.env.AGENT_VERSION || "1.0.0",
+    agentVersion: process.env.AGENT_VERSION || "1.1.0",
     registrationToken,
   });
 
@@ -89,7 +96,7 @@ async function registerDevice(serverUrl: string, registrationToken: string): Pro
     serverUrl: normalizedServerUrl,
     deviceId: data.id,
     registrationToken: data.registrationToken,
-    agentVersion: process.env.AGENT_VERSION || "1.0.0",
+    agentVersion: process.env.AGENT_VERSION || "1.1.0",
     heartbeatInterval: parseHeartbeat(process.env.HEARTBEAT_INTERVAL),
   };
 
@@ -106,6 +113,9 @@ function connectSocket(): void {
       deviceId: config.deviceId,
       token: config.registrationToken,
       agentVersion: config.agentVersion,
+      // El server elige el protocolo de vista en vivo con esto: "2" acepta live-start/live-stop (push),
+      // los agentes ya instalados que no lo mandan siguen recibiendo un live-command por cuadro.
+      liveProtocol: "2",
     },
     transports: ["websocket"],
     reconnection: true,
@@ -123,6 +133,7 @@ function connectSocket(): void {
 
   socket.on("disconnect", (reason) => {
     console.log(`Disconnected: ${reason}`);
+    stopLiveStream();
     reportStatus("disconnected", { error: reason });
     stopHeartbeat();
   });
@@ -140,11 +151,76 @@ function connectSocket(): void {
   socket.on("live-command", async () => {
     await handleLiveCommand();
   });
+
+  socket.on("live-start", (data?: { intervalMs?: unknown }) => {
+    startLiveStream(data?.intervalMs);
+  });
+
+  socket.on("live-stop", () => {
+    stopLiveStream();
+  });
+}
+
+// Empieza (o reajusta) el streaming. Se puede recibir live-start varias veces: cambiar el intervalo
+// en el panel manda otro, y el server lo reenvia como watchdog cuando nota que dejaron de llegar cuadros.
+function startLiveStream(rawInterval: unknown): void {
+  if (!socket || !socket.connected) return;
+
+  liveStreamIntervalMs = clampLiveInterval(rawInterval);
+  if (liveStreaming) return;
+
+  liveStreaming = true;
+  console.log(`Live stream started (${liveStreamIntervalMs} ms/frame)`);
+  void streamTick();
+}
+
+function stopLiveStream(): void {
+  liveStreaming = false;
+  if (liveStreamTimer) {
+    clearTimeout(liveStreamTimer);
+    liveStreamTimer = null;
+  }
+  // Sin espectadores no tiene sentido dejar un powershell.exe capturando la pantalla: se cierra ya, en
+  // vez de esperar el timeout de inactividad del worker.
+  stopLiveCaptureWorker();
+}
+
+// Un cuadro y despues el siguiente: el proximo se programa cuando termina la captura, asi que el
+// ritmo real es max(intervalo, tiempo de captura) en vez de un timer que corre en paralelo y
+// descarta pedidos. Es la diferencia entre "1 JPEG por round-trip" y video continuo.
+async function streamTick(): Promise<void> {
+  if (!liveStreaming) return;
+  if (!socket || !socket.connected) {
+    stopLiveStream();
+    return;
+  }
+
+  const startedAt = Date.now();
+  isCapturing = true;
+  try {
+    const result = await requestLiveFrame();
+    socket.emit("live-frame-result", result.data, {
+      mimeType: result.mimeType,
+      width: result.width,
+      height: result.height,
+    });
+  } catch (error: any) {
+    socket.emit("live-frame-error", { error: error.message || "Screenshot failed" });
+  } finally {
+    isCapturing = false;
+  }
+
+  if (!liveStreaming) return;
+  liveStreamTimer = setTimeout(() => {
+    liveStreamTimer = null;
+    void streamTick();
+  }, nextFrameDelayMs(liveStreamIntervalMs, Date.now() - startedAt));
 }
 
 async function handleLiveCommand(): Promise<void> {
   if (!socket || !socket.connected) return;
-  if (isCapturing) return;
+  // En modo streaming el loop ya regula su propio ritmo; un live-command suelto se ignora.
+  if (isCapturing || liveStreaming) return;
 
   isCapturing = true;
   try {
@@ -281,7 +357,7 @@ async function main(): Promise<void> {
   role = resolveRole(process.argv, process.env);
 
   console.log("=== Remote Monitoring Agent ===");
-  console.log(`Version: ${process.env.AGENT_VERSION || "1.0.0"}`);
+  console.log(`Version: ${process.env.AGENT_VERSION || "1.1.0"}`);
   console.log(`Role: ${role}`);
 
   if (role === "session") {
@@ -326,6 +402,7 @@ async function main(): Promise<void> {
 
   const stopAndExit = (signal: string) => {
     console.log(`${signal} shutting down...`);
+    stopLiveStream();
     stopHeartbeat();
     reportStatus("stopped");
     if (socket) socket.disconnect();

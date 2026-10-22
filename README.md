@@ -10,7 +10,7 @@ Interfaz en espanol (footer `softgroup.com.ar`). Incluye capturas de pantalla ba
 
 - **Monitoreo de equipos**: los agentes se registran y reportan estado ONLINE/OFFLINE via heartbeat cada 30s.
 - **Capturas de pantalla** bajo demanda (`POST /api/screenshots/request`).
-- **Vista en vivo**: stream de frames JPEG del escritorio del agente a la web (intervalo 1s / 2s / 5s).
+- **Vista en vivo**: el agente manda una corriente continua de JPEG (0,25 s / 1 s / 2 s / 5 s por cuadro) al panel, sin un pedido por frame, capturada con un worker persistente (~6 cuadros/s reales).
 - **Grabacion de video**: boton Grabar en la vista en vivo; genera un `.webm` descargable (MediaRecorder + canvas).
 - **Comandos remotos**: screenshot, informacion del sistema, lista de procesos, bloqueo de pantalla, apagado, reinicio, logout.
 - **Auditoria completa**, roles y permisos (RBAC).
@@ -192,7 +192,7 @@ En la app, **Domains** > agregar el dominio (ej. `monitor.recuperocrediticio.com
 | `MAX_SCREENSHOT_BYTES` | No | Cota de bytes por captura que acepta el WebSocket | `12582912` (12 MB) |
 | `WS_MAX_BUFFER_BYTES` | No | Mensaje maximo de socket.io (frame de live view) | `16777216` (16 MB) |
 | `DEVICE_OFFLINE_AFTER_MS` | No | Sin heartbeat por ese tiempo, el equipo pasa a OFFLINE | `180000` |
-| `WS_PING_INTERVAL_MS` / `WS_PING_TIMEOUT_MS` | No | Keepalive del canal de agentes | `10000` / `5000` |
+| `WS_PING_INTERVAL_MS` / `WS_PING_TIMEOUT_MS` | No | Keepalive del canal de agentes. Con 5 s de timeout el live view se cortaba: un pong que tarda 6 s con el uplink ocupado cerraba la conexion | `25000` / `20000` |
 
 ---
 
@@ -220,6 +220,12 @@ npm run package        # empaqueta agent.exe con pkg (node18-win-x64)
 - Fallback a nivel usuario (instalacion manual): **`%APPDATA%\remote-monitor-agent.json`**.
 - Si no existe ninguna config, el agente se registra usando las variables `SERVER_URL` y `REGISTRATION_TOKEN`.
 - `registrationToken` guardado es un **token unico por dispositivo** emitido por el server al registrarse (el token compartido de onboarding solo se usa para el alta).
+- Ajustes del live view (variables de entorno del proceso del agente): `LIVE_MAX_WIDTH` (ancho maximo
+  del cuadro, default `1280`) y `LIVE_JPEG_QUALITY` (calidad JPEG, default `70`). Bajar el ancho es lo
+  que hace que un cuadro pese ~66 KB en vez de varios MB. `LIVE_CAPTURE_WORKER` (default `1`) levanta el
+  worker de captura persistente; con `0` el agente vuelve a la captura por proceso. `LIVE_MAX_FRAME_BYTES`
+  (default `8388608`) es el techo de tamano de un cuadro antes de considerarlo canal roto.
+  `HEARTBEAT_INTERVAL` sigue en `30000` ms.
 
 ### Icono de bandeja
 
@@ -332,11 +338,36 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-silent.ps1
 
 ### Vista en vivo (streaming)
 
-- La web pide frames por WebSocket (`live-view-frame`), el server retransmite al agente (`live-command`) y el agente responde con un JPEG (`live-frame-result`).
+- El panel se suscribe una sola vez (`live-view-start` con el intervalo pedido) y el server manda un
+  `live-start` al agente: **el agente produce los cuadros solo**, en un loop que programa el cuadro
+  siguiente cuando termina el anterior. No hay un round-trip por frame ni pedidos solapados.
+- El server lleva la cuenta de espectadores por equipo: varios paneles mirando el mismo PC comparten
+  **una sola corriente** al ritmo mas rapido pedido, y cerrar la ultima pestana apaga la captura en el
+  agente (antes seguia mandando cuadros si algun cliente no llegaba a mandar `stop-live-view`).
+- Agentes viejos (los `agent-live.exe` que ya estan en los PCs, sin `liveProtocol: "2"` en el
+  handshake) siguen con el esquema antiguo de un `live-command` por cuadro; el server detecta el modo
+  por conexion y no hay que actualizarlos de golpe.
+- Cada cuadro es un **JPEG reducido a 1280 px de ancho con calidad 70** (`LIVE_MAX_WIDTH` /
+  `LIVE_JPEG_QUALITY` en el agente). A resolucion nativa un monitor 2K/4K manda varios MB por frame y
+  eso es lo que saturaba el uplink y cortaba la conexion.
+- La captura la hace un **worker persistente**: el agente levanta un solo `powershell.exe` mientras hay
+  espectadores y le pide cuadros por stdin, que devuelve por stdout en bruto (longitud + JPEG). Medido en
+  una estacion con dos monitores (pantalla virtual de 3360x1080): **~150 ms por cuadro de 66 KB**, tope
+  real de **~6 cuadros/s**. Las alternativas que quedaron atras: `screenshot-desktop` + re-encode en JS
+  ~720 ms / 124 KB, y el `powershell.exe` de antes levantado por cuadro ~1400 ms / 55 KB. El costo que se
+  ahorro no es el de GDI+, es el de arrancar PowerShell y el runtime .NET una vez por cuadro.
+- El worker se apaga solo cuando se cierra la corriente (`live-stop`) y tiene un timeout de inactividad
+  como red de seguridad; si PowerShell falla, el agente **degrada a la captura por proceso** en vez de
+  quedarse sin imagen. `LIVE_CAPTURE_WORKER=0` lo desactiva en un equipo concreto.
+- Costo de red real (medido con el binario empaquetado contra un server de prueba): a 1 s por cuadro
+  son ~66 KB/s de uplink por equipo; al ritmo minimo de 0,25 s son **~3,8 cuadros/s y ~250 KB/s
+  (2 Mbps)**. Por eso el default del panel sigue siendo 1 s: 0,25 s tiene que ser una decision consciente
+  cuando el PC esta en la misma red que el server.
 - Los frames viajan como **binario crudo** por el WebSocket, no como base64 dentro de JSON. Esto elimina la inflacion de ~33% del base64 en el salto de red; el navegador los reconstruye con `Blob` + object URL.
-- Los frames se comprimen a **JPEG** (o a max. 1280px de ancho en el fallback PowerShell con System.Drawing).
 - Las dimensiones de cada frame se leen parseando la cabecera del PNG/JPEG en el agente, no hardcodeadas.
 - Los frames **no se guardan en la base de datos** ni como archivos; solo viven en memoria del navegador.
+- Si la corriente se corta (reconexion del agente, worker de sesion caido), el server lo detecta por
+  inactividad y reactiva el `live-start`; el panel muestra el contador de cuadros reales que llegan.
 - Desde la web se puede **grabar** la vista en vivo y descargar un `.webm` (~4 fps, redibuja el ultimo frame cada 250ms para cubrir toda la duracion).
 
 ---
@@ -553,7 +584,9 @@ remote-monitoring-platform/
 | Agent no conecta | Verificar `SERVER_URL` y `REGISTRATION_TOKEN`, y que la config en `%APPDATA%` sea correcta |
 | Agent aparece OFFLINE | Verificar firewall y que el agente este corriendo (tarea `RemoteMonitoringAgent`) |
 | Screenshot falla | Agente debe correr en la sesion interactiva del usuario (no como servicio) |
-| Vista en vivo no muestra frames | El agente debe ser el build con soporte `live-command` (`agent-live.exe`) |
+| Vista en vivo no muestra frames | El server registra `[AGENT] Connected: <id> (live: stream|poll)`. `poll` = agente viejo (un cuadro por pedido, mas lento); `stream` = build nuevo. Si dice `stream` y no llegan cuadros, mira el contador del panel y el log `Corriente cortada en <id>` |
+| La vista en vivo va a saltos | Solia ser request/response por frame. Con el build nuevo es una corriente del agente a 1280 px / calidad 70, capturada por el worker persistente (~150 ms por cuadro). Si sigue a saltos: el equipo esta lejos del server (latencia), `LIVE_MAX_WIDTH` muy alto, el log del agente dice `worker inestable` (PowerShell caido, se esta usando la ruta lenta), o el disco/CPU del PC esta al tope y la captura tarda mas que el intervalo |
+| El live view consume muchisimas KB y el log dice `full resolution` | El worker esta caido y el re-encode JS tambien fallo: los cuadros salen a resolucion nativa. Probar `LIVE_CAPTURE_WORKER=1` (default), bajar `LIVE_MAX_WIDTH`, o revisar que el servicio pueda escribir en `%TEMP%` |
 | El empleado no ve el icono de bandeja | Verificar la tarea `RemoteMonitoringAgent` (modo logon) o `RemoteMonitoringAgent-Tray` (modo Session 0) y que `RmTray.exe` este en la carpeta de instalacion. El detalle del estado esta en `%LOCALAPPDATA%\RemoteMonitoringAgent\status.json` |
 | Video grabado corto | Solo aplicaba a builds previos al fix del "pump" de redibujado (commit `0e3b93d`) |
 | Login falla | Verificar `JWT_SECRET` configurado correctamente |

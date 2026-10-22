@@ -474,3 +474,68 @@ en el pipeline, y `tsc`/jest no la cubren.
 comentario), balance de llaves y anidación revisados a mano en ambos archivos. **`nginx -t` no se pudo
 correr localmente** (no hay nginx ni Docker en esta máquina); queda como verificación pendiente en el
 proximo build de Dokploy, donde ahora forma parte del build.
+
+---
+
+## 13. Mejora de la vista en vivo (2026-10-21): de un JPEG por round-trip a una corriente
+
+**No era un hallazgo de seguridad, era un problema de arquitectura.** La vista en vivo pedía un frame
+completo por round-trip (`setInterval` del panel → `live-view-frame` → `live-command` → captura →
+`live-frame-result` → sala). Con 2000 ms por cuadro y un flag `isCapturing` que descartaba en silencio
+los pedidos solapados, la imagen se veía a saltos. Los cambios, en orden de impacto:
+
+1. **Push desde el agente** (`live-start` / `live-stop`, capability `liveProtocol: "2"` en el handshake).
+   El agente programa el cuadro siguiente cuando termina el anterior; desaparece el round-trip por frame
+   y el descarte por solapamiento. Los agentes ya desplegados siguen en modo `poll` (un `live-command`
+   por cuadro) porque el server decide el modo por conexión.
+2. **Contador de espectadores en el server** (`server/src/websocket/liveSessions.ts`). Varios paneles del
+   mismo PC comparten una sola corriente al ritmo más rápido; el último en irse apaga la captura; los
+   frames se descartan si la sala `live:<deviceId>` no tiene espectadores (antes el filtro era
+   `adminNamespace.sockets.size`, global). El auditoría `WS_LIVE_VIEW_START` ahora se escribe una vez por
+   corriente, no una vez cada 2 s por panel.
+3. **Worker de captura persistente** (`agent/src/liveCaptureWorker.ts`). Un solo `powershell.exe` mientras
+   hay espectadores, alimentado por stdin y con cuadros binarios por stdout.
+4. **Retuning de ping de socket.io** (`25000`/`20000` default). Con `pingTimeout 5000` un pong atrasado
+   por el uplink saturado cerraba la conexión y el equipo parpadeaba OFFLINE en el panel.
+
+**Medición (estación real, dos monitores, pantalla virtual 3360x1080, cuadro escalado a 1280 px / q70).**
+
+| Ruta | ms por cuadro | KB por cuadro |
+|------|---------------|---------------|
+| `powershell.exe` por cuadro (el diseño anterior) | ~1400 | 55 |
+| `screenshot-desktop` + re-encode JS (`jpeg-js`) | ~720 | 124 |
+| Worker persistente | **~150** | **66** |
+| `screenshot-desktop` sin escalar | ~300 | 356 |
+
+El número que importa no es el costo de GDI+ contra JavaScript: es pagar el arranque de PowerShell y del
+runtime .NET una vez por corriente en lugar de una vez por cuadro. End-to-end con el binario empaquetado:
+a 1 s por cuadro, 6 cuadros en 6 s; al piso de 0,25 s, **23 cuadros en 6 s (~3,8 fps, gap medio 259 ms)**;
+después de `live-stop`, 0 cuadros; y quedó **1 solo proceso `powershell.exe`** (el de la propia medición),
+es decir, no huérfanos con la captura activa.
+
+**Lado de seguridad y privacidad.** El script del worker es una **constante de texto sin interpolación**:
+no recibe ni el config ni payloads del server como código, solo dos enteros ya validados por
+`clampInt`/`clampLiveInterval` (`s <ancho> <calidad>` por stdin). No contiene credenciales ni escribe
+fuera de su carpeta temporal. El riesgo nuevo concreto era el **proceso huérfano**: un `powershell.exe`
+que siga capturando el escritorio después de que el administrador cerró el panel sería un problema de
+privacidad, así que el worker se cierra por `live-stop`, por caída del WebSocket, en `SIGINT`/`SIGTERM`,
+en el handler `process.on("exit")` (Windows no mata al hijo en un `process.exit()` directo) y por timeout
+de inactividad de 70 s como red de seguridad; el worker de sesión lo cierra en su propio `stop()`. Se
+agregó `windowsHide: true` para que no aparezca una consola en el escritorio del usuario monitoreado.
+El framing binario se corta antes de difundir cualquier cosa que no sea un JPEG de tamaño plausible, así
+que un stdout contaminado no llega a las salas.
+
+**Lo que NO cierra este cambio.** Sigue siendo un JPEG completo por cuadro: no hay transferencia por
+regiones sucias ni codificación H.264, que es lo que lleva a Radmin a 20+ fps. El techo honesto con esta
+arquitectura es ~6 fps y ~250 KB/s de uplink al ritmo mínimo; para más hace falta un codec de video y un
+plan de migración del protocolo. Tampoco se verificó contra el server de producción (sección 12: el
+dominio seguía en 502), ni con un `agent-live.exe` del build anterior en modo `poll` real —la
+compatibilidad `poll` se probó emitiendo `live-command` a un agente nuevo—, ni el renderizado en el
+navegador.
+
+**Verificación.** Agente: `tsc --noEmit` limpio y **123 tests** de vitest (incluye el parser de frames y
+el ciclo de vida del worker con un hijo falso). Server: `tsc` limpio y **127 tests** de jest (el scheduler
+con timers falsos). Cliente: `tsc` + `vite build` OK. `npm audit --omit=dev` en el agente: 0 avisos con
+`jpeg-js` agregado. Harness end-to-end con el exe empaquetado contra un server socket.io falso en
+`127.0.0.1`, con `ProgramData`/`APPDATA`/`LOCALAPPDATA` apuntando a una carpeta temporal para no tocar la
+instalación real de este equipo (los números de la tabla de arriba salen de ahí).

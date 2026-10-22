@@ -1,6 +1,6 @@
 {
   "name": "remote-monitoring-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Remote Monitoring Agent for Windows",
   "main": "dist/agent.js",
   "scripts": {
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "axios": "^1.6.5",
+    "jpeg-js": "^0.4.4",
     "screenshot-desktop": "^1.15.4",
     "socket.io-client": "^4.7.4"
   },

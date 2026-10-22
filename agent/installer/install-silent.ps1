@@ -143,7 +143,7 @@ if (-not $existingConfig -or -not $existingConfig.deviceId) {
         ipAddress         = $ip
         macAddress        = $mac
         platform          = $env:PROCESSOR_ARCHITECTURE
-        agentVersion      = "1.0.0"
+        agentVersion      = "1.1.0"
         registrationToken = $RegistrationToken
       } | ConvertTo-Json
 
@@ -154,7 +154,7 @@ if (-not $existingConfig -or -not $existingConfig.deviceId) {
         serverUrl         = $ServerUrl
         deviceId          = $resp.id
         registrationToken = $resp.registrationToken
-        agentVersion      = "1.0.0"
+        agentVersion      = "1.1.0"
         heartbeatInterval = 30000
       } | ConvertTo-Json
       Write-ConfigNoBom -Path $configPath -Json $config
@@ -164,7 +164,7 @@ if (-not $existingConfig -or -not $existingConfig.deviceId) {
       $config = @{
         serverUrl         = $ServerUrl
         registrationToken = $RegistrationToken
-        agentVersion      = "1.0.0"
+        agentVersion      = "1.1.0"
         heartbeatInterval = 30000
       } | ConvertTo-Json
       Write-ConfigNoBom -Path $configPath -Json $config
